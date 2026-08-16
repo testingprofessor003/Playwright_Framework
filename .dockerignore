@@ -1,0 +1,8 @@
+node_modules
+.git
+reports
+logs
+dist
+.env
+*.md
+docs/*.pdf

@@ -1,0 +1,73 @@
+name: Playwright BDD CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 'Cucumber tags (e.g. @smoke)'
+        required: false
+        default: '@smoke'
+      browserstack:
+        description: 'Run on BrowserStack'
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run Cucumber tests
+        env:
+          BROWSER: ${{ matrix.browser }}
+          HEADLESS: 'true'
+          BASE_URL: ${{ vars.BASE_URL || 'https://example.com' }}
+          DB_ENABLED: 'false'
+          OLLAMA_ENABLED: 'false'
+        run: npx cucumber-js --tags "${{ github.event.inputs.tags || '@smoke' }}"
+      - name: Generate reports
+        if: always()
+        run: |
+          npm run allure:generate || true
+          npm run report:custom || true
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ matrix.browser }}
+          path: |
+            reports/
+            logs/
+
+  browserstack:
+    if: ${{ github.event.inputs.browserstack == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run on BrowserStack
+        env:
+          EXECUTION_ENV: browserstack
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          BASE_URL: ${{ vars.BASE_URL || 'https://example.com' }}
+        run: npm run test:browserstack

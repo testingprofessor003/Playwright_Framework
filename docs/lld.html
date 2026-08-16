@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>LLD · Playwright BDD Cucumber Framework</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    body { font-family: Segoe UI, system-ui, sans-serif; color: #0f172a; max-width: 980px; margin: 40px auto; line-height: 1.55; }
+    h1, h2, h3 { color: #0b3b5a; }
+    h1 { border-bottom: 3px solid #0284c7; padding-bottom: 8px; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; font-size: 14px; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #e0f2fe; }
+    code, pre { background: #f1f5f9; }
+    pre { padding: 12px; overflow: auto; font-size: 13px; }
+    .meta { color: #475569; }
+    .mermaid { margin: 16px 0 28px; }
+    @media print { body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <h1>Low Level Design (LLD)</h1>
+  <p class="meta">Playwright BDD Cucumber Framework · Version 1.1</p>
+
+  <h2>1. Directory map</h2>
+  <pre>src/config     env, artifacts modes, browsers, BrowserStack, run IDs, paths
+src/world      CustomWorld (page, logger, shared buffer, stepIndex)
+src/hooks      Before/After/AfterStep lifecycle, artifacts, triage
+src/pages      BasePage, LoginPage, AddCustomerPage, CustomersPage,
+               OpenAccountPage, CustomerDashboardPage, templates/
+src/utils      PlaywrightActions, waits, files, dates
+src/errors     FrameworkError hierarchy + mapper
+src/logger     Winston factory
+src/shared     SharedBuffer (scenario/worker/global)
+src/db         MySQL/Postgres adapter, schema, repository
+src/reports    Custom HTML, JSON history, extent/ activity HTML
+src/ai         llmClient, modelRouter, FailureTriage, runTriage, llmHealth
+features/      Gherkin + step definitions (login, customer)
+dashboard/     Express API + Chart.js UI
+docker/        Dockerfile and compose
+.github/       GitHub Actions
+jenkins/       Jenkinsfile
+docs/          HLD/LLD HTML and PDF</pre>
+
+  <h2>2. Configuration contract</h2>
+  <p>Loaded from <code>.env</code> via <code>src/config/env.ts</code>.</p>
+  <table>
+    <tr><th>Area</th><th>Keys</th></tr>
+    <tr><td>App</td><td><code>BASE_URL</code>, <code>APP_USERNAME</code>, <code>APP_PASSWORD</code>, <code>APP_ENCRYPTION_KEY</code></td></tr>
+    <tr><td>Browser</td><td><code>BROWSER</code>, <code>BROWSER_CHANNEL</code>, <code>HEADLESS</code>, <code>KEEP_BROWSER_OPEN</code>, <code>SLOW_MO</code>, <code>PARALLEL</code></td></tr>
+    <tr><td>Artifacts</td><td><code>SCREENSHOT</code>, <code>STEP_SCREENSHOT</code>, <code>SCREENSHOT_FULL_PAGE</code>, <code>VIDEO</code>, <code>TRACE</code> — each <code>off | on | retain-on-failure</code></td></tr>
+    <tr><td>LLM</td><td><code>LLM_ENABLED</code>, <code>LLM_HOST</code>, <code>LLM_API</code>, <code>LLM_API_KEY</code>, <code>LLM_MODEL</code>, <code>LLM_ROUTE</code>, <code>LLM_ROUTER_MODEL</code>, <code>LLM_COMPLEX_MODEL</code>, <code>LLM_PREFER_BILLION</code>, <code>LLM_TIMEOUT_MS</code>. <code>OLLAMA_*</code> remain aliases.</td></tr>
+    <tr><td>Other</td><td><code>EXECUTION_ENV</code>, <code>DB_*</code>, <code>BROWSERSTACK_*</code>, <code>LOG_LEVEL</code></td></tr>
+  </table>
+  <p>Run identity: <code>RUN_ID</code> env or file-locked <code>reports/.run-id</code> so all workers share one run.</p>
+  <p>Defaults: <code>LLM_HOST=http://localaiserver.testingprofessor.net</code>, <code>LLM_API=ollama</code>, <code>LLM_MODEL=auto</code>, <code>LLM_ROUTER_MODEL=llama3</code>, <code>LLM_COMPLEX_MODEL=gemma4:latest</code>, <code>LLM_PREFER_BILLION=32</code>.</p>
+
+  <h2>3. CustomWorld</h2>
+  <pre>browser, context, page, actions, logger, shared
+runId, workerId, scenarioId, scenarioName, featureName, tags
+stepIndex, screenshotPath, videoPath, tracePath, lastError, browserName</pre>
+  <p>Constructed by Cucumber. Logger is rebound in <code>Before</code> with correlation metadata. <code>stepIndex</code> increments in <code>BeforeStep</code> for step-screenshot file names.</p>
+
+  <h2>4. Hooks</h2>
+  <div class="mermaid">
+flowchart TD
+  BA[BeforeAll] --> Launch[Launch local browser / reset Extent]
+  B[Before] --> Ctx[newContext recordVideo if VIDEO on or retain-on-failure]
+  Ctx --> TraceStart[tracing.start if TRACE on or retain-on-failure]
+  BS[BeforeStep] --> ActStart[ActivityReporter.startStep]
+  AS[AfterStep] --> FailLog{status failed?}
+  FailLog -->|yes| LogFail[logFailure]
+  FailLog --> Shot{STEP_SCREENSHOT keep?}
+  Shot -->|yes| PNG[PNG under screenshots/steps]
+  PNG --> EndStep[endStep]
+  Shot -->|no| EndStep
+  AF[After] --> ScShot{SCREENSHOT keep?}
+  ScShot --> StopTrace{TRACE keep? stop zip : discard}
+  StopTrace --> Video{VIDEO keep? attach webm : video.delete}
+  Video --> Persist[history + DB]
+  AA[AfterAll] --> Triage[runTriage on primary worker if LLM_ENABLED]
+  Triage --> Extent[generateExtentReport with insights]
+  </div>
+  <table>
+    <tr><th>Hook</th><th>Behavior</th></tr>
+    <tr><td>BeforeAll</td><td>Create run, copy Allure categories, reset Extent data, launch local browser (not BrowserStack)</td></tr>
+    <tr><td>Before</td><td>New context/page, optional video dir and tracing, init SharedBuffer scenario scope, start Extent scenario</td></tr>
+    <tr><td>BeforeStep</td><td>Increment <code>stepIndex</code>, start Extent step, log STEP</td></tr>
+    <tr><td>AfterStep</td><td>Log failure on the step; capture step screenshot when <code>STEP_SCREENSHOT</code> applies; end Extent step</td></tr>
+    <tr><td>After</td><td>Scenario screenshot, trace zip or discard, video keep or delete; map error; persist JSON+DB; flush Extent</td></tr>
+    <tr><td>AfterAll</td><td>Close worker browser; finalize run; primary worker runs LLM triage (or custom report); generate Extent HTML; close DB</td></tr>
+  </table>
+  <p>Artifact helpers: <code>src/config/artifacts.ts</code> — <code>shouldRecordArtifact</code> / <code>shouldKeepArtifact</code>.</p>
+
+  <h2>5. PlaywrightActions API</h2>
+  <p>All methods log at debug/info, emit Extent activities, and wrap failures with <code>mapPlaywrightError</code>.</p>
+  <p>Methods: <code>goto, click, dblClick, fill, type, clear, select, selectRandom, hover, check, uncheck, upload, download, frame, press, handleDialog, waitForVisible, waitForHidden, waitForUrl, waitForLoadState, getText, getAttribute, getCount, isVisible, isEnabled, screenshot, getTitle, assertVisible, assertText, assertTitle, assertTitleNotEmpty, scrollIntoView</code>.</p>
+  <p><code>select</code> accepts a value, <code>{ label }</code>, <code>{ index }</code>, or blank (random option). <code>selectRandom</code> can <code>exclude</code> labels such as <code>No Category</code>.</p>
+
+  <h2>6. Page Object pattern</h2>
+  <p>Core banking pages (not only templates):</p>
+  <table>
+    <tr><th>Class</th><th>Role</th></tr>
+    <tr><td>LoginPage</td><td>Staff sign-in</td></tr>
+    <tr><td>AddCustomerPage</td><td>Create customer from Faker data</td></tr>
+    <tr><td>CustomersPage</td><td>Search / assert customer in list</td></tr>
+    <tr><td>OpenAccountPage</td><td>Open N accounts for a customer</td></tr>
+    <tr><td>CustomerDashboardPage</td><td>Customer login, Continue as first name, deposit</td></tr>
+  </table>
+  <pre>export class LoginPage extends BasePage {
+  private readonly user = this.page.locator('#user');
+  async login(user: string, pass: string) {
+    await this.actions.fill(this.user, 'username', user);
+  }
+}</pre>
+  <p>Feature: <code>features/customer.feature</code>. Steps: <code>features/steps/customer.steps.ts</code>. Export pages from <code>src/pages/index.ts</code>.</p>
+
+  <h2>7. Error catalog</h2>
+  <table>
+    <tr><th>Class</th><th>Code</th><th>Category</th><th>Typical Playwright signal</th></tr>
+    <tr><td>ElementNotFoundError</td><td>PW_ELEMENT_NOT_FOUND</td><td>ELEMENT</td><td>Timeout waiting for locator</td></tr>
+    <tr><td>StrictModeViolationError</td><td>PW_STRICT_MODE</td><td>ELEMENT</td><td>strict mode violation</td></tr>
+    <tr><td>TimeoutExceededError</td><td>PW_TIMEOUT</td><td>TIMEOUT</td><td>TimeoutError</td></tr>
+    <tr><td>NavigationError</td><td>PW_NAVIGATION</td><td>NAVIGATION</td><td>net::, NS_ERROR, navigation</td></tr>
+    <tr><td>TargetClosedError</td><td>PW_TARGET_CLOSED</td><td>TARGET_CLOSED</td><td>Target closed</td></tr>
+    <tr><td>AssertionFailedError</td><td>PW_ASSERTION</td><td>ASSERTION</td><td>assert* helpers</td></tr>
+    <tr><td>BrowserLaunchError</td><td>PW_BROWSER_LAUNCH</td><td>BROWSER</td><td>launch / connect failure</td></tr>
+    <tr><td>ConfigurationError</td><td>FW_CONFIGURATION</td><td>CONFIGURATION</td><td>missing env / bad browser</td></tr>
+    <tr><td>DatabaseError</td><td>FW_DATABASE</td><td>DATABASE</td><td>SQL / connection</td></tr>
+    <tr><td>SharedStoreError</td><td>FW_SHARED_STORE</td><td>SHARED_STORE</td><td>file lock</td></tr>
+    <tr><td>AiServiceError</td><td>FW_AI_SERVICE</td><td>AI</td><td>LLM HTTP / missing API key / timeout</td></tr>
+    <tr><td>FrameworkError</td><td>PW_UNKNOWN</td><td>UNKNOWN</td><td>fallback</td></tr>
+  </table>
+  <p>Mapper: <code>src/errors/mapPlaywrightError.ts</code>. JSON shape includes code, category, locator, url, action, timestamp, stack, cause.</p>
+
+  <h2>8. SharedBuffer</h2>
+  <pre>await world.shared.set('orderId', '123', { scope: 'global', ttlMs: 600000 });
+const id = await world.shared.get('orderId', 'global');</pre>
+  <p>Global writes: <code>reports/.shared-buffer.json</code> with <code>proper-lockfile</code>, then optional DB upsert into <code>shared_kv</code>.</p>
+  <p>Customer keys: <code>customer</code>, <code>customerName</code>, <code>customerFirstName</code>, <code>customerLastName</code>, <code>customers</code>, <code>lastCustomer</code>, <code>accounts</code>, <code>accountCount</code>.</p>
+
+  <h2>9. Database ER</h2>
+  <div class="mermaid">
+erDiagram
+  test_runs ||--o{ test_scenarios : contains
+  test_scenarios ||--o{ test_steps : contains
+  test_scenarios ||--o{ failures : has
+  test_runs ||--o{ ai_insights : has
+  shared_kv ||--|| shared_kv : kv
+  test_runs {
+    string id PK
+    string started_at
+    int passed
+    int failed
+    string status
+  }
+  test_scenarios {
+    string id PK
+    string run_id FK
+    string status
+    int duration_ms
+    string screenshot_path
+    string video_path
+    string trace_path
+  }
+  failures {
+    string id PK
+    string error_code
+    string error_category
+  }
+  ai_insights {
+    string id PK
+    string likely_cause
+    string suggested_fix
+    string category
+    string confidence
+  }
+  </div>
+  <p>Placeholders use <code>?</code>; the Postgres client rewrites them to <code>$1..$n</code>. Upsert for <code>shared_kv</code> uses <code>REPLACE INTO</code> (MySQL) or <code>ON CONFLICT</code> (Postgres).</p>
+  <p>If <code>DB_ENABLED=false</code>, repository methods no-op and the dashboard reads <code>reports/history/*.json</code>. History insights may include <code>model</code> (chosen LLM) even if the DB column is not present.</p>
+
+  <h2>10. Reporting modules</h2>
+  <ul>
+    <li><code>historyStore.ts</code> — append scenario, insights, maintain runs index.</li>
+    <li><code>customFailureReport.ts</code> — HTML with mapped reason, locator, screenshot, AI note + model name.</li>
+    <li><code>src/reports/extent/</code> — ActivityReporter (Gherkin steps + Playwright actions + step screenshots), <code>generateExtentReport.ts</code> writes <code>reports/extent/index.html</code> with video/trace links and AI box.</li>
+    <li>Allure formatter in <code>cucumber.js</code>; categories copied from <code>src/reports/allure-categories.json</code>.</li>
+  </ul>
+  <div class="mermaid">
+flowchart LR
+  Actions[PlaywrightActions] --> AR[ActivityReporter JSON]
+  Hooks[Hooks screenshots/video/trace] --> AR
+  Insights[history insights] --> Gen[generateExtentReport]
+  AR --> Gen
+  Gen --> HTML[reports/extent/index.html]
+  </div>
+
+  <h2>11. Dashboard APIs</h2>
+  <table>
+    <tr><th>Method</th><th>Path</th><th>Description</th></tr>
+    <tr><td>GET</td><td>/api/health</td><td>DB flag, LLM enabled/reachable, host, model</td></tr>
+    <tr><td>GET</td><td>/api/runs</td><td>Run list</td></tr>
+    <tr><td>GET</td><td>/api/runs/:id</td><td>Run + scenarios</td></tr>
+    <tr><td>GET</td><td>/api/failures</td><td>Optional ?runId=</td></tr>
+    <tr><td>GET</td><td>/api/trends</td><td>Last 30 runs for charts</td></tr>
+    <tr><td>GET</td><td>/api/insights</td><td>AI insights</td></tr>
+    <tr><td>POST</td><td>/api/triage</td><td>Trigger LLM triage for a run</td></tr>
+  </table>
+  <p>UI: overview KPIs, pass/fail trend (Chart.js), run table, failure drill-down, flaky detection, AI Insights tab showing category, confidence, and model name.</p>
+
+  <h2>12. LLM triage and routing</h2>
+  <p>Modules:</p>
+  <ul>
+    <li><code>llmClient.ts</code> — Ollama <code>/api/tags</code> and <code>/api/chat</code> (OpenAI <code>/v1/*</code> fallback), Bearer + <code>X-API-Key</code>, timeout, catalog with <code>parameterBillion</code>.</li>
+    <li><code>modelRouter.ts</code> — estimate complexity; list catalog; ask small llama3 to pick; heuristic if router missing.</li>
+    <li><code>FailureTriage.ts</code> — JSON prompt for likelyCause / category / suggestedFix / confidence; stores <code>model</code>.</li>
+    <li><code>runTriage.ts</code> — iterate history failures, skip already-triaged, write custom report.</li>
+    <li><code>llmHealth.ts</code> — <code>npm run ai:health</code> prints installed models and 32B-class entries.</li>
+  </ul>
+  <div class="mermaid">
+sequenceDiagram
+  participant T as runTriage
+  participant R as modelRouter
+  participant O as Ollama API
+  participant F as FailureTriage
+  T->>O: GET /api/tags
+  O-->>R: names + details.parameter_size
+  R->>R: estimateComplexity
+  R->>O: POST /api/chat llama3 JSON route
+  O-->>R: model + complexity
+  alt complex
+    R-->>F: ~32B or gemma4:latest
+  else simple
+    R-->>F: small llama3*
+  end
+  F->>O: POST /api/chat chosen model
+  O-->>F: JSON insight
+  F-->>T: persist insight + model name
+  </div>
+  <p>32B-class band is 27B–40B so names like <code>qwen2.5:32b</code>, <code>llama3.1:32b</code>, and <code>gemma2:27b</code> qualify. Size is taken from <code>details.parameter_size</code> or parsed from the tag (<code>:32b</code>, <code>8x7b</code> MoE). The llama3 router itself is constrained to models ≤ 8B so a 32B llama3 is not used for routing.</p>
+  <p>Heuristic when llama3 is not installed: complex → closest ~32B then <code>gemma4:latest</code>; simple → smallest llama3*; medium → ~8B.</p>
+  <p>Auth: nginx in front of the server returns 401 without <code>LLM_API_KEY</code>. Chat is skipped with a warning; reports still generate.</p>
+
+  <h2>13. BrowserStack connect</h2>
+  <pre>wss://cdp.browserstack.com/playwright?caps=&lt;urlencoded JSON&gt;</pre>
+  <p>Caps include browser, os, build, username, accessKey, scenario name. Local launch path is skipped when <code>EXECUTION_ENV=browserstack</code>; each scenario connects and closes its own remote browser.</p>
+
+  <h2>14. CI/CD</h2>
+  <ul>
+    <li>GitHub Actions: matrix chromium/firefox/webkit, artifact upload, optional BrowserStack job.</li>
+    <li>Jenkins: install, optional migrate, test, Allure + HTML publisher.</li>
+    <li>Docker: official Playwright image; compose brings MySQL, Postgres, Ollama, dashboard, tests profile. Hosted LLM is selected with <code>LLM_HOST</code> / <code>LLM_API_KEY</code>.</li>
+  </ul>
+
+  <h2>15. npm scripts (execution styles)</h2>
+  <table>
+    <tr><th>Script</th><th>Use</th></tr>
+    <tr><td>test / test:chrome / firefox / webkit</td><td>Browsers</td></tr>
+    <tr><td>test:headed / test:slow / test:debug / test:keep-open</td><td>Local debug</td></tr>
+    <tr><td>test:parallel</td><td>Cucumber workers</td></tr>
+    <tr><td>test:login / test:customer / test:e2e / test:customer:datadriven</td><td>Tag filters</td></tr>
+    <tr><td>test:browserstack / test:trace</td><td>Remote / tracing</td></tr>
+    <tr><td>report:custom / report:extent / report:all</td><td>HTML reports + optional triage</td></tr>
+    <tr><td>ai:health / ai:triage</td><td>List models / run failure triage</td></tr>
+    <tr><td>dashboard:start / db:migrate</td><td>Ops</td></tr>
+    <tr><td>docker:up / docker:test</td><td>Containers</td></tr>
+    <tr><td>docs:pdf</td><td>HLD/LLD PDF via Playwright</td></tr>
+  </table>
+  <p>Codegen URL: <code>npm run codegen:url --url=https://corebanking.testingprofessor.net --browser=firefox</code></p>
+  <p>Tags: <code>npm run test:tags -- @smoke and not @wip</code></p>
+
+  <h2>16. Logging format</h2>
+  <p>Console: timestamp, level, <code>runId|workerId|scenarioId</code>, message. Files: JSON in <code>logs/framework.log</code> and <code>logs/errors.log</code> with rotation. Step screenshots and LLM route decisions are logged at info.</p>
+
+  <script>mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
+</body>
+</html>

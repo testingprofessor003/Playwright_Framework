@@ -1,0 +1,76 @@
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'TAGS', defaultValue: '@smoke', description: 'Cucumber tags')
+    choice(name: 'BROWSER', choices: ['chromium', 'firefox', 'webkit'], description: 'Browser')
+    booleanParam(name: 'BROWSERSTACK', defaultValue: false, description: 'Run on BrowserStack')
+  }
+
+  environment {
+    HEADLESS = 'true'
+    BROWSER = "${params.BROWSER}"
+    BASE_URL = "${env.APP_BASE_URL ?: 'https://example.com'}"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Install') {
+      steps {
+        sh 'npm ci'
+        sh 'npx playwright install --with-deps ${BROWSER}'
+      }
+    }
+
+    stage('Migrate DB') {
+      when { expression { return env.DB_ENABLED == 'true' } }
+      steps {
+        sh 'npm run db:migrate'
+      }
+    }
+
+    stage('Test') {
+      steps {
+        script {
+          if (params.BROWSERSTACK) {
+            withCredentials([
+              usernamePassword(
+                credentialsId: 'browserstack',
+                usernameVariable: 'BROWSERSTACK_USERNAME',
+                passwordVariable: 'BROWSERSTACK_ACCESS_KEY'
+              )
+            ]) {
+              sh 'EXECUTION_ENV=browserstack npx cucumber-js --tags "${TAGS}"'
+            }
+          } else {
+            sh 'npx cucumber-js --tags "${TAGS}"'
+          }
+        }
+      }
+    }
+
+    stage('Reports') {
+      steps {
+        sh 'npm run allure:generate || true'
+        sh 'npm run report:custom || true'
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: 'reports/**,logs/**', allowEmptyArchive: true
+      allure includeProperties: false, jdk: '', results: [[path: 'reports/allure-results']]
+      publishHTML(target: [
+        reportDir: 'reports/custom',
+        reportFiles: 'failures.html',
+        reportName: 'Custom Failure Report'
+      ])
+    }
+  }
+}

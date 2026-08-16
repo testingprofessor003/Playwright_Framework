@@ -1,0 +1,93 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: playwright_framework
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ppassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: root
+      POSTGRES_DB: playwright_framework
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d playwright_framework"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["npx", "tsx", "dashboard/server.ts"]
+    ports:
+      - "3000:3000"
+    environment:
+      DB_ENABLED: "true"
+      DB_TYPE: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_NAME: playwright_framework
+      OLLAMA_ENABLED: "true"
+      OLLAMA_HOST: http://ollama:11434
+      DASHBOARD_PORT: 3000
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ../reports:/app/reports
+      - ../logs:/app/logs
+
+  tests:
+    profiles: ["tests"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["npx", "cucumber-js", "--tags", "@smoke"]
+    environment:
+      BASE_URL: ${BASE_URL:-https://example.com}
+      BROWSER: chromium
+      HEADLESS: "true"
+      DB_ENABLED: "true"
+      DB_TYPE: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_NAME: playwright_framework
+      OLLAMA_ENABLED: "false"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ../reports:/app/reports
+      - ../logs:/app/logs
+
+volumes:
+  mysql_data:
+  pg_data:
+  ollama_data:

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Playwright BDD · Execution Dashboard</title>
+  <link rel="stylesheet" href="/styles.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <aside>
+    <h1>PW BDD</h1>
+    <p class="muted">Historical executions</p>
+    <nav>
+      <button class="nav active" data-view="overview">Overview</button>
+      <button class="nav" data-view="runs">Runs</button>
+      <button class="nav" data-view="failures">Failures</button>
+      <button class="nav" data-view="insights">AI Insights</button>
+    </nav>
+    <div class="aside-foot">
+      <button id="triageBtn" class="primary">Run AI triage</button>
+      <p id="health" class="muted"></p>
+    </div>
+  </aside>
+  <main>
+    <header class="top">
+      <h2 id="viewTitle">Overview</h2>
+      <select id="runFilter"><option value="">Latest runs</option></select>
+    </header>
+
+    <section id="overview" class="view">
+      <div class="kpis" id="kpis"></div>
+      <div class="panel"><canvas id="trendChart" height="110"></canvas></div>
+      <div class="split">
+        <div class="panel">
+          <h3>Recent runs</h3>
+          <div id="recentRuns"></div>
+        </div>
+        <div class="panel">
+          <h3>Flaky scenarios</h3>
+          <div id="flaky"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="runs" class="view hidden">
+      <div id="runTable" class="panel"></div>
+    </section>
+
+    <section id="failures" class="view hidden">
+      <div id="failureList"></div>
+    </section>
+
+    <section id="insights" class="view hidden">
+      <div id="insightList"></div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

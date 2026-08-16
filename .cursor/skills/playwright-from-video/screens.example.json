@@ -1,0 +1,36 @@
+{
+  "video": "recordings/example-flow.mp4",
+  "featureTag": "transfer",
+  "featureFile": "features/transfer.feature",
+  "reusedPages": ["LoginPage"],
+  "screens": [
+    {
+      "id": "login",
+      "name": "Sign in",
+      "pageClass": "LoginPage",
+      "pageFile": "src/pages/LoginPage.ts",
+      "existing": true,
+      "elements": [
+        { "name": "Sign in", "role": "button", "accessibleName": "Sign in", "action": "click" },
+        { "name": "Email address", "role": "textbox", "accessibleName": "Email address", "action": "fill" },
+        { "name": "Password", "role": "textbox", "accessibleName": "Password", "action": "fill" }
+      ],
+      "actions": ["open", "signIn"],
+      "assertions": ["assertSignedIn"]
+    },
+    {
+      "id": "transfer-form",
+      "name": "Transfer funds",
+      "pageClass": "TransferPage",
+      "pageFile": "src/pages/TransferPage.ts",
+      "existing": false,
+      "elements": [
+        { "name": "Transfer tab", "role": "tab", "accessibleName": "Transfer", "action": "click" },
+        { "name": "Amount", "role": "textbox", "accessibleName": "Amount", "action": "fill" },
+        { "name": "Transfer", "role": "button", "accessibleName": "Transfer", "action": "click" }
+      ],
+      "actions": ["openTransferTab", "fillTransfer", "submitTransfer"],
+      "assertions": ["assertTransferCompleted"]
+    }
+  ]
+}
