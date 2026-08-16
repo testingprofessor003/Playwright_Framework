@@ -85,6 +85,7 @@ export class ActivityReporter {
     durationMs?: number;
     error?: string;
     details?: string;
+    screenshot?: string;
   }): void {
     const prettyAction = input.action.charAt(0).toUpperCase() + input.action.slice(1);
     const name = input.locator ? `${prettyAction}: ${input.locator}` : prettyAction;
@@ -98,6 +99,7 @@ export class ActivityReporter {
       durationMs: input.durationMs,
       error: input.error,
       details: input.details,
+      screenshot: input.screenshot,
     });
   }
 

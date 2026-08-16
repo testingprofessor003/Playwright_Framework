@@ -4,7 +4,7 @@ import { CUSTOM_REPORT_DIR } from '../config/paths';
 import { loadRunIndex, loadRun, HistoryScenario, HistoryInsight } from './historyStore';
 import { formatDisplayDate, formatDuration } from '../utils/dates';
 import { logger } from '../logger/logger';
-import { ensureReportLogo, reportBrandCss, reportBrandMarkup } from './branding';
+import { ensureReportFavicon, ensureReportLogo, reportBrandCss, reportBrandMarkup, reportFaviconMarkup } from './branding';
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -54,6 +54,7 @@ function failureCard(scenario: HistoryScenario, insights: HistoryInsight[]): str
 function shellHtml(options: {
   title: string;
   logoSrc: string;
+  faviconSrc: string;
   heroTitleHtml: string;
   heroMetaHtml: string;
   bodyHtml: string;
@@ -66,6 +67,7 @@ function shellHtml(options: {
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
+  ${reportFaviconMarkup(options.faviconSrc)}
   <title>${escapeHtml(options.title)}</title>
   <style>
     :root { --bg:#0f172a; --card:#1e293b; --text:#e2e8f0; --muted:#94a3b8; --fail:#f87171; --ok:#34d399; --accent:#38bdf8; --brand:#facc15; }
@@ -105,12 +107,14 @@ export function generateCustomFailureReport(runId?: string): string {
   const run = runId ? loadRun(runId) : loadRun(index[0]?.id);
   fs.mkdirSync(CUSTOM_REPORT_DIR, { recursive: true });
   const logoSrc = ensureReportLogo(CUSTOM_REPORT_DIR);
+  const faviconSrc = ensureReportFavicon(CUSTOM_REPORT_DIR);
   const outFile = path.join(CUSTOM_REPORT_DIR, 'failures.html');
 
   if (!run) {
     const empty = shellHtml({
       title: 'Failure Report',
       logoSrc,
+      faviconSrc,
       heroTitleHtml: '<h1>Custom Failure Report</h1>',
       heroMetaHtml: '<p>No executions found. Run <code>npm test</code> first.</p>',
       bodyHtml: '<section class="grid"><p>No executions found.</p></section>',
@@ -126,6 +130,7 @@ export function generateCustomFailureReport(runId?: string): string {
   const html = shellHtml({
     title: `Failure Report · ${run.name || run.id}`,
     logoSrc,
+    faviconSrc,
     heroTitleHtml: '<h1>Custom Failure Report</h1>',
     heroMetaHtml: `<p>Run <strong>${escapeHtml(run.name || run.id)}</strong><br/>${escapeHtml(
       formatDisplayDate(run.startedAt),

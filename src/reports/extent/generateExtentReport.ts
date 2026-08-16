@@ -4,11 +4,30 @@ import os from 'os';
 import { EXTENT_DATA_DIR, EXTENT_REPORT_DIR, ensureDirs } from '../../config/paths';
 import { env } from '../../config/env';
 import { formatDisplayDate, formatDuration, nowIso } from '../../utils/dates';
+import { sanitizeFileName } from '../../utils/files';
 import { ExtentEnvironment, ExtentRun, ExtentTest } from './types';
 import { logger } from '../../logger/logger';
 import { loadRun } from '../historyStore';
-import { ensureReportLogo, reportBrandCss, reportBrandMarkup } from '../branding';
+import { ensureReportFavicon, ensureReportLogo, reportBrandCss, reportBrandMarkup, reportFaviconMarkup } from '../branding';
+import { stageExtentArtifact } from '../publishArtifacts';
 
+const EXTENT_HISTORY_DIR = path.join(EXTENT_REPORT_DIR, 'history');
+const EXTENT_HISTORY_INDEX = path.join(EXTENT_REPORT_DIR, 'history-index.json');
+
+export type ExtentHistoryEntry = {
+  id: string;
+  name: string;
+  file: string;
+  startedAt: string;
+  finishedAt: string;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  durationMs: number;
+  browser?: string;
+  environment?: string;
+};
 function loadTests(): ExtentTest[] {
   if (!fs.existsSync(EXTENT_DATA_DIR)) return [];
   return fs
@@ -35,24 +54,48 @@ function loadRunMeta(): { id?: string; name?: string; startedAt?: string } {
   }
 }
 
-function toRelativeArtifact(filePath?: string): string | undefined {
+function resolveArtifactFile(filePath: string): string | undefined {
+  if (!filePath || filePath.startsWith('data:')) return undefined;
+  const candidates = [path.resolve(filePath), path.resolve(EXTENT_REPORT_DIR, filePath)];
+  for (const abs of candidates) {
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return abs;
+  }
+  return undefined;
+}
+
+/** Embed screenshot bytes as a data-URI so the HTML report is shareable without sidecar files. */
+function toBase64Screenshot(filePath?: string): string | undefined {
   if (!filePath) return undefined;
-  const abs = path.resolve(filePath);
+  if (filePath.startsWith('data:image/')) return filePath;
+  const abs = resolveArtifactFile(filePath);
+  if (!abs) return undefined;
+  const ext = path.extname(abs).toLowerCase();
+  const mime =
+    ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.webp' ? 'image/webp' : 'image/png';
+  return `data:${mime};base64,${fs.readFileSync(abs).toString('base64')}`;
+}
+
+function toRelativeArtifact(filePath?: string, kind: 'videos' | 'traces'): string | undefined {
+  if (!filePath) return undefined;
+  const abs = resolveArtifactFile(filePath) || path.resolve(filePath);
   if (!fs.existsSync(abs)) return undefined;
+  // Stage under reports/extent/<kind>/ so file:// HTML can load media (browsers block ../).
+  const staged = stageExtentArtifact(abs, kind);
+  if (staged) return staged;
   return path.relative(EXTENT_REPORT_DIR, abs).replace(/\\/g, '/');
 }
 
 function withRelativeArtifacts(test: ExtentTest): ExtentTest {
   return {
     ...test,
-    screenshot: toRelativeArtifact(test.screenshot) || test.screenshot,
-    video: toRelativeArtifact(test.video) || test.video,
-    trace: toRelativeArtifact(test.trace) || test.trace,
+    screenshot: toBase64Screenshot(test.screenshot) || test.screenshot,
+    video: toRelativeArtifact(test.video, 'videos') || test.video,
+    trace: toRelativeArtifact(test.trace, 'traces') || test.trace,
     steps: test.steps.map((step) => ({
       ...step,
       activities: step.activities.map((activity) => ({
         ...activity,
-        screenshot: toRelativeArtifact(activity.screenshot) || activity.screenshot,
+        screenshot: toBase64Screenshot(activity.screenshot) || activity.screenshot,
       })),
     })),
   };
@@ -135,7 +178,11 @@ function escapeHtml(value: unknown): string {
     .replace(/"/g, '&quot;');
 }
 
-export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-logo.png'): string {
+export function renderExtentHtml(
+  run: ExtentRun,
+  logoSrc = 'testing-professor-logo.png',
+  faviconSrc = 'testing-professor-favicon.png',
+): string {
   const payload = JSON.stringify(run).replace(/</g, '\\u003c');
   const passPct = run.total ? Math.round((run.passed / run.total) * 100) : 0;
   const brand = reportBrandMarkup({
@@ -148,6 +195,7 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  ${reportFaviconMarkup(faviconSrc)}
   <title>Activity Report · ${escapeHtml(run.name)}</title>
   <style>
     :root {
@@ -236,17 +284,82 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
     .activity .name { font-size: 13px; }
     .activity .extra { font-size: 12px; color: var(--muted); margin-top: 4px; }
     .error { color: #fecaca; white-space: pre-wrap; font-size: 12px; margin-top: 6px; }
-    .shot { max-width: 100%; border-radius: 8px; margin-top: 12px; border: 1px solid var(--line); }
-    .shot.step { margin-top: 8px; max-height: 360px; object-fit: contain; }
+    .shot-thumb {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b1220;
+      cursor: zoom-in;
+      overflow: hidden;
+      vertical-align: top;
+    }
+    .shot-thumb img {
+      display: block;
+      width: 160px;
+      height: 100px;
+      object-fit: cover;
+      object-position: top center;
+    }
+    .shot-thumb.scenario img { width: 220px; height: 130px; }
+    .shot-thumb:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .shot-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .artifacts { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
     .artifacts a { color: var(--info); }
-    video.shot { max-height: 420px; background: #000; }
+    video.shot { max-width: 100%; max-height: 420px; border-radius: 8px; border: 1px solid var(--line); background: #000; }
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(2, 6, 23, 0.92);
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      cursor: zoom-out;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img {
+      max-width: min(96vw, 1600px);
+      max-height: 92vh;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      cursor: default;
+    }
+    .lightbox-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .lightbox-hint {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--muted);
+      font-size: 12px;
+    }
     .ai { background: #0b3b4a; padding: 12px; border-radius: 8px; margin-top: 12px; }
     .ai strong { color: var(--info); }
     .empty { padding: 40px; color: var(--muted); text-align: center; }
   </style>
 </head>
 <body>
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot preview" hidden>
+    <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close fullscreen screenshot">Close</button>
+    <img id="lightboxImg" alt="Fullscreen screenshot"/>
+    <div class="lightbox-hint">Click outside the image or press Esc to close</div>
+  </div>
   <header class="app">
     ${brand}
     <div class="meta">
@@ -364,6 +477,51 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
       return (ms / 1000).toFixed(2) + 's';
     }
 
+    function shotThumb(src, alt, variant) {
+      if (!src) return '';
+      const cls = variant === 'scenario' ? 'shot-thumb scenario' : 'shot-thumb';
+      return '<button type="button" class="' + cls + '" data-fullsrc="' + escape(src) + '" title="Click to view fullscreen">' +
+        '<img src="' + escape(src) + '" alt="' + escape(alt || 'Screenshot') + '" loading="lazy"/>' +
+        '</button>';
+    }
+
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightboxImg');
+    const lightboxClose = document.getElementById('lightboxClose');
+
+    function openLightbox(src, alt) {
+      if (!src) return;
+      lightboxImg.src = src;
+      lightboxImg.alt = alt || 'Fullscreen screenshot';
+      lightbox.classList.add('open');
+      lightbox.hidden = false;
+      lightboxClose.focus();
+    }
+
+    function closeLightbox() {
+      lightbox.classList.remove('open');
+      lightbox.hidden = true;
+      lightboxImg.removeAttribute('src');
+    }
+
+    function bindShotThumbs(root) {
+      (root || document).querySelectorAll('.shot-thumb').forEach((btn) => {
+        btn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openLightbox(btn.getAttribute('data-fullsrc') || btn.querySelector('img')?.src, btn.querySelector('img')?.alt);
+        });
+      });
+    }
+
+    lightbox.addEventListener('click', (event) => {
+      if (event.target === lightbox || event.target === lightboxClose) closeLightbox();
+    });
+    lightboxImg.addEventListener('click', (event) => event.stopPropagation());
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && lightbox.classList.contains('open')) closeLightbox();
+    });
+
     function renderList() {
       const query = document.getElementById('search').value.toLowerCase();
       const status = document.getElementById('statusFilter').value;
@@ -408,7 +566,7 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
             (activity.url ? '<div class="extra">URL: ' + escape(activity.url) + '</div>' : '') +
             (activity.details ? '<div class="extra">' + escape(activity.details) + '</div>' : '') +
             (activity.error ? '<div class="error">' + escape(activity.error) + '</div>' : '') +
-            (activity.screenshot ? '<img class="shot step" src="' + escape(activity.screenshot) + '" alt="Step screenshot"/>' : '') +
+            shotThumb(activity.screenshot, 'Action screenshot') +
             '</div>' +
             '<div class="muted">' + duration(activity.durationMs) + '</div></div>';
         }).join('');
@@ -428,7 +586,7 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
         (test.insight ? '<div class="ai"><strong>AI triage</strong> (' + escape(test.insight.confidence || 'n/a') + (test.insight.category ? ' · ' + escape(test.insight.category) : '') + (test.insight.model ? ' · ' + escape(test.insight.model) : '') + ')<p>' + escape(test.insight.likelyCause || '') + '</p><p><em>Fix:</em> ' + escape(test.insight.suggestedFix || '') + '</p></div>' : '') +
         '<div class="detail-actions"><button type="button" id="expandAll">Expand all steps</button><button type="button" id="collapseAll">Collapse all steps</button></div>' +
         '<div class="artifacts">' +
-        (test.screenshot ? '<img class="shot" src="' + escape(test.screenshot) + '" alt="Scenario screenshot"/>' : '') +
+        shotThumb(test.screenshot, 'Scenario screenshot', 'scenario') +
         (test.video
           ? '<div class="artifact-video"><video class="shot" controls src="' + escape(test.video) + '"></video>' +
             '<p class="muted"><a href="' + escape(test.video) + '" download>Open / download scenario recording</a> ' +
@@ -444,6 +602,7 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
       const collapseAll = document.getElementById('collapseAll');
       if (expandAll) expandAll.addEventListener('click', () => document.querySelectorAll('.step').forEach((step) => step.classList.add('open')));
       if (collapseAll) collapseAll.addEventListener('click', () => document.querySelectorAll('.step').forEach((step) => step.classList.remove('open')));
+      bindShotThumbs(document.getElementById('detail'));
     }
 
     document.getElementById('search').addEventListener('input', renderList);
@@ -458,13 +617,144 @@ export function renderExtentHtml(run: ExtentRun, logoSrc = 'testing-professor-lo
 export function generateExtentReport(): string {
   ensureDirs();
   fs.mkdirSync(EXTENT_REPORT_DIR, { recursive: true });
+  fs.mkdirSync(EXTENT_HISTORY_DIR, { recursive: true });
   const logoSrc = ensureReportLogo(EXTENT_REPORT_DIR);
+  const faviconSrc = ensureReportFavicon(EXTENT_REPORT_DIR);
   const run = buildExtentRun();
-  const outFile = path.join(EXTENT_REPORT_DIR, 'index.html');
-  fs.writeFileSync(outFile, renderExtentHtml(run, logoSrc), 'utf8');
-  fs.writeFileSync(path.join(EXTENT_REPORT_DIR, 'last-run.json'), JSON.stringify(run, null, 2), 'utf8');
-  logger.info(`Extent activity report written to ${outFile}`);
-  return outFile;
+  const safeId = sanitizeFileName(run.id || run.name || `run-${Date.now()}`) || `run-${Date.now()}`;
+  const historyRelative = `history/${safeId}.html`;
+  const historyFile = path.join(EXTENT_REPORT_DIR, historyRelative);
+  const latestFile = path.join(EXTENT_REPORT_DIR, 'latest.html');
+  const indexFile = path.join(EXTENT_REPORT_DIR, 'index.html');
+
+  // Per-run HTML (Base64 screenshots embedded) — never overwrite other executions.
+  fs.writeFileSync(historyFile, renderExtentHtml(run, `../${logoSrc}`, `../${faviconSrc}`), 'utf8');
+  // Convenience copy of the most recent run.
+  fs.writeFileSync(latestFile, renderExtentHtml(run, logoSrc, faviconSrc), 'utf8');
+
+  const entry: ExtentHistoryEntry = {
+    id: run.id,
+    name: run.name,
+    file: historyRelative.replace(/\\/g, '/'),
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    total: run.total,
+    passed: run.passed,
+    failed: run.failed,
+    skipped: run.skipped,
+    durationMs: run.durationMs,
+    browser: run.environment.browser,
+    environment: run.environment.executionEnv,
+  };
+  const history = upsertHistoryEntry(entry);
+  fs.writeFileSync(indexFile, renderExtentArchiveHtml(history, logoSrc, faviconSrc), 'utf8');
+  fs.writeFileSync(
+    path.join(EXTENT_REPORT_DIR, 'last-run.json'),
+    JSON.stringify({ ...entry, reportFile: historyRelative.replace(/\\/g, '/'), latestFile: 'latest.html' }, null, 2),
+    'utf8',
+  );
+
+  logger.info(`Extent activity report written to ${historyFile}`);
+  logger.info(`Extent archive index: ${indexFile} (latest: ${latestFile})`);
+  return historyFile;
+}
+
+function loadHistoryIndex(): ExtentHistoryEntry[] {
+  if (!fs.existsSync(EXTENT_HISTORY_INDEX)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(EXTENT_HISTORY_INDEX, 'utf8')) as ExtentHistoryEntry[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function upsertHistoryEntry(entry: ExtentHistoryEntry): ExtentHistoryEntry[] {
+  const existing = loadHistoryIndex().filter((item) => item.id !== entry.id);
+  const next = [entry, ...existing].sort((a, b) => b.finishedAt.localeCompare(a.finishedAt));
+  fs.writeFileSync(EXTENT_HISTORY_INDEX, JSON.stringify(next, null, 2), 'utf8');
+  return next;
+}
+
+function renderExtentArchiveHtml(
+  history: ExtentHistoryEntry[],
+  logoSrc: string,
+  faviconSrc = 'testing-professor-favicon.png',
+): string {
+  const brand = reportBrandMarkup({
+    logoSrc,
+    titleHtml: '<h1>ACTIVITY <span>ARCHIVE</span></h1>',
+    subtitle: 'Every execution keeps its own Extent report — pick a run to open',
+  });
+  const rows = history.length
+    ? history
+        .map((entry, index) => {
+          const latest = index === 0 ? ' <span class="pill">latest</span>' : '';
+          return `<tr>
+      <td><a href="${escapeHtml(entry.file)}">${escapeHtml(entry.name)}</a>${latest}</td>
+      <td>${escapeHtml(formatDisplayDate(entry.finishedAt))}</td>
+      <td>${escapeHtml(entry.browser || '')} · ${escapeHtml(entry.environment || '')}</td>
+      <td class="pass">${entry.passed}</td>
+      <td class="fail">${entry.failed}</td>
+      <td class="skip">${entry.skipped}</td>
+      <td>${escapeHtml(formatDuration(entry.durationMs || 0))}</td>
+      <td><a class="btn" href="${escapeHtml(entry.file)}">Open</a></td>
+    </tr>`;
+        })
+        .join('\n')
+    : `<tr><td colspan="8" class="empty">No Extent runs archived yet. Execute tests to generate the first report.</td></tr>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  ${reportFaviconMarkup(faviconSrc)}
+  <title>Activity Report Archive</title>
+  <style>
+    :root {
+      --bg: #0b1220; --card: #1e293b; --line: #334155; --text: #e2e8f0; --muted: #94a3b8;
+      --pass: #34d399; --fail: #f87171; --skip: #fbbf24; --accent: #6366f1;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Segoe UI, system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header.app { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: #0f172a; border-bottom: 1px solid var(--line); gap: 16px; }
+    ${reportBrandCss()}
+    .wrap { padding: 24px; max-width: 1100px; margin: 0 auto; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+    .actions { margin: 0 0 16px; display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn, a.btn { display: inline-block; background: var(--accent); color: white; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; }
+    a { color: #93c5fd; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: middle; }
+    th { color: var(--muted); font-weight: 600; }
+    .pass { color: var(--pass); } .fail { color: var(--fail); } .skip { color: var(--skip); }
+    .pill { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #312e81; color: #c7d2fe; font-size: 11px; }
+    .empty { color: var(--muted); text-align: center; padding: 24px !important; }
+    .meta { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header class="app">${brand}<div class="meta">${history.length} saved run${history.length === 1 ? '' : 's'}</div></header>
+  <div class="wrap">
+    <div class="actions">
+      <a class="btn" href="latest.html">Open latest report</a>
+    </div>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Run</th><th>Finished</th><th>Env</th><th>Passed</th><th>Failed</th><th>Skipped</th><th>Duration</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 if (require.main === module) {

@@ -149,7 +149,7 @@ npm run docker:test
 
 | Script | Purpose |
 | --- | --- |
-| `test`, `test:chrome`, `test:firefox`, `test:webkit` | Browsers |
+| `test`, `test:chrome`, `test:chromium`, `test:firefox`, `test:webkit`, `test:edge` | Browsers |
 | `test:all-browsers` | Sequential engines |
 | `test:headed`, `test:debug`, `test:slow`, `test:trace` | Debug |
 | `test:parallel` | 4 workers |

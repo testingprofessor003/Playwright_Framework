@@ -13,13 +13,15 @@ import { Browser } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { setGlobalTestRuntime } from 'allure-js-commons/sdk/runtime';
+import { AllureCucumberTestRuntime } from 'allure-cucumberjs';
 import { CustomWorld } from '../world/CustomWorld';
 import { env } from '../config/env';
 import { launchLocalBrowser, resolveBrowserName, getContextOptions, maximizeWindow } from '../config/browsers';
 import { connectBrowserStack } from '../config/browserstack';
 import { getOrCreateRunId, getWorkerId } from '../config/runContext';
 import { PlaywrightActions } from '../utils/PlaywrightActions';
-import { SCREENSHOTS_DIR, STEP_SCREENSHOTS_DIR, TRACES_DIR, VIDEOS_DIR, ALLURE_RESULTS_DIR } from '../config/paths';
+import { TRACES_DIR, VIDEOS_DIR, ALLURE_RESULTS_DIR } from '../config/paths';
 import { shouldKeepArtifact, shouldRecordArtifact } from '../config/artifacts';
 import { sanitizeFileName } from '../utils/files';
 import { buildRunName, stamp } from '../utils/dates';
@@ -32,8 +34,10 @@ import { closeDb } from '../db/adapter';
 import { beginScenarioReporter, endScenarioReporter, getActivityReporter, resetExtentData } from '../reports/extent/ActivityReporter';
 import { generateCustomFailureReport } from '../reports/customFailureReport';
 import { runTriage } from '../ai/runTriage';
+import { publishScreenshot, scenarioScreenshotPath, stepScreenshotPath } from '../reports/publishArtifacts';
 
 setDefaultTimeout(Number(process.env.CUCUMBER_TIMEOUT || 60000));
+setGlobalTestRuntime(new AllureCucumberTestRuntime());
 
 function toDurationMs(result: ITestCaseHookParameter['result'], startedAt: number): number {
   const duration = result?.duration as { seconds?: number; nanos?: number } | number | undefined;
@@ -151,12 +155,7 @@ Before(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
       this.browser = workerBrowser!;
     }
 
-    const recordVideo = shouldRecordArtifact(env.video) ? { dir: VIDEOS_DIR } : undefined;
-
-    this.context = await this.browser.newContext({
-      ...getContextOptions(),
-      recordVideo,
-    });
+    this.context = await this.browser.newContext(getContextOptions());
     this.context.setDefaultTimeout(env.defaultTimeout);
     this.context.setDefaultNavigationTimeout(env.navigationTimeout);
     this.page = await this.context.newPage();
@@ -223,13 +222,23 @@ After(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
   try {
     if (this.page && !this.page.isClosed() && shouldKeepArtifact(env.screenshot, failed)) {
       const fileBase = `${sanitizeFileName(this.scenarioName)}_${stamp()}`;
-      const screenshotFile = path.join(SCREENSHOTS_DIR, `${fileBase}.png`);
-      const buffer = await this.page.screenshot({ fullPage: env.screenshotFullPage, path: screenshotFile });
-      this.screenshotPath = screenshotFile;
-      await this.attach(buffer, 'image/png');
+      const screenshotFile = scenarioScreenshotPath(fileBase);
+      const buffer = await this.page.screenshot({ fullPage: env.screenshotFullPage });
+      this.screenshotPath = await publishScreenshot({
+        buffer,
+        absPath: screenshotFile,
+        title: failed ? 'Failure screenshot' : 'Scenario screenshot',
+        extentActivity: true,
+        attachToWorld: (data, mediaType) => this.attach(data, { mediaType, fileName: path.basename(screenshotFile) }),
+      });
+      this.logger.info(`Screenshot saved: ${this.screenshotPath}`);
       if (failed) {
         const logDump = JSON.stringify(mapped?.toJSON() || { status }, null, 2);
-        await this.attach(logDump, 'application/json');
+        try {
+          await this.attach(logDump, { mediaType: 'application/json', fileName: 'error.json' });
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -239,7 +248,14 @@ After(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
         await this.context.tracing.stop({ path: traceFile });
         this.tracePath = traceFile;
         if (fs.existsSync(traceFile)) {
-          await this.attach(fs.readFileSync(traceFile), 'application/zip');
+          try {
+            await this.attach(fs.readFileSync(traceFile), {
+              mediaType: 'application/zip',
+              fileName: path.basename(traceFile),
+            });
+          } catch {
+            /* ignore */
+          }
         }
       } else {
         await this.context.tracing.stop();
@@ -261,7 +277,14 @@ After(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
           const rawPath = await video.path();
           if (rawPath && fs.existsSync(rawPath)) {
             this.videoPath = await persistScenarioVideo(rawPath, this.scenarioName, this.scenarioId);
-            await this.attach(fs.readFileSync(this.videoPath), 'video/webm');
+            try {
+              await this.attach(fs.readFileSync(this.videoPath), {
+                mediaType: 'video/webm',
+                fileName: path.basename(this.videoPath),
+              });
+            } catch {
+              /* ignore */
+            }
             this.logger.info(`Scenario video saved: ${this.videoPath}`);
           }
         } else {
@@ -372,14 +395,18 @@ async function captureStepScreenshot(
   if (!eligible || !shouldKeepArtifact(env.stepScreenshot, failed)) return;
   if (!world.page || world.page.isClosed()) return;
   try {
-    fs.mkdirSync(STEP_SCREENSHOTS_DIR, { recursive: true });
-    const file = path.join(
-      STEP_SCREENSHOTS_DIR,
-      `${sanitizeFileName(world.scenarioName)}_${world.scenarioId.slice(0, 8)}_${String(world.stepIndex).padStart(2, '0')}_${stamp()}.png`,
+    const file = stepScreenshotPath(
+      `${sanitizeFileName(world.scenarioName)}_${world.scenarioId.slice(0, 8)}_${String(world.stepIndex).padStart(2, '0')}_${stamp()}`,
     );
-    const buffer = await world.page.screenshot({ fullPage: env.screenshotFullPage, path: file });
-    getActivityReporter()?.attachScreenshot(file, `Screenshot after: ${stepText}`);
-    await world.attach(buffer, 'image/png');
+    const buffer = await world.page.screenshot({ fullPage: env.screenshotFullPage });
+    await publishScreenshot({
+      buffer,
+      absPath: file,
+      title: `Screenshot after: ${stepText}`,
+      extentActivity: true,
+      attachToWorld: (data, mediaType) =>
+        world.attach(data, { mediaType, fileName: path.basename(file) }),
+    });
   } catch (error) {
     world.logger.warn(`Step screenshot failed: ${error instanceof Error ? error.message : error}`);
   }

@@ -19,6 +19,8 @@ import { env } from '../config/env';
 import { DOWNLOADS_DIR } from '../config/paths';
 import { ensureDir, sanitizeFileName } from './files';
 import { getActivityReporter, withSuppressedWinston } from '../reports/extent/ActivityReporter';
+import { shouldKeepArtifact } from '../config/artifacts';
+import { actionScreenshotPath, publishScreenshot } from '../reports/publishArtifacts';
 
 export type SelectValue =
   | string
@@ -49,6 +51,7 @@ export class PlaywrightActions {
   private parentPage?: Page;
   readonly waits: WaitConditions;
   readonly asserts: Assertions;
+  private actionShotSeq = 0;
 
   constructor(
     private page: Page,
@@ -81,23 +84,59 @@ export class PlaywrightActions {
     }
   }
 
+  private async captureActionScreenshot(
+    action: string,
+    locator: string | undefined,
+    failed: boolean,
+  ): Promise<string | undefined> {
+    if (!shouldKeepArtifact(env.actionScreenshot, failed)) return undefined;
+    if (!this.page || this.page.isClosed()) return undefined;
+    try {
+      this.actionShotSeq += 1;
+      const fileBase = [
+        sanitizeFileName(action),
+        sanitizeFileName(locator || 'page'),
+        String(Date.now()),
+        String(this.actionShotSeq).padStart(3, '0'),
+      ].join('_');
+      const absPath = actionScreenshotPath(fileBase);
+      const buffer = await this.page.screenshot({ fullPage: env.screenshotFullPage });
+      return await publishScreenshot({
+        buffer,
+        absPath,
+        title: `Action ${action}${locator ? `: ${locator}` : ''}`,
+        extentActivity: false,
+        // Avoid flooding Allure with one attachment per click/fill; Extent embeds on the activity.
+        allure: failed,
+      });
+    } catch (error) {
+      this.logger.debug(
+        `Action screenshot skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+  }
+
   private async run<T>(action: string, locator: string | undefined, fn: () => Promise<T>): Promise<T> {
     const started = Date.now();
     this.logger.debug(`Action ${action}${locator ? ` [${locator}]` : ''} on ${this.safeUrl()}`);
     return withSuppressedWinston(async () => {
       try {
         const result = await fn();
+        const screenshot = await this.captureActionScreenshot(action, locator, false);
         getActivityReporter()?.logAction({
           action,
           locator,
           url: this.safeUrl(),
           status: 'pass',
           durationMs: Date.now() - started,
+          screenshot,
         });
         return result;
       } catch (error) {
         const mapped = mapPlaywrightError(error, this.ctx(action, locator));
         this.logger.error(`Action failed: ${mapped.code} ${mapped.message}`, mapped.toJSON());
+        const screenshot = await this.captureActionScreenshot(action, locator, true);
         getActivityReporter()?.logAction({
           action,
           locator,
@@ -105,6 +144,7 @@ export class PlaywrightActions {
           status: 'fail',
           durationMs: Date.now() - started,
           error: mapped.message,
+          screenshot,
         });
         throw mapped;
       }

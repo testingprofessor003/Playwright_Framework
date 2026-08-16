@@ -72,6 +72,7 @@ services:
       BASE_URL: ${BASE_URL:-https://corebanking.testingprofessor.net/}
       BROWSER: chromium
       HEADLESS: "true"
+      CHROMIUM_SANDBOX: "false"
       LOGIN_PAUSE_MS: "0"
       CLICK_PAUSE_MS: "0"
       APP_USERNAME: ${APP_USERNAME:-}

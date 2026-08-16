@@ -2,7 +2,10 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const report = path.resolve(process.cwd(), 'reports', 'extent', 'index.html');
+const extentDir = path.resolve(process.cwd(), 'reports', 'extent');
+const latest = path.join(extentDir, 'latest.html');
+const index = path.join(extentDir, 'index.html');
+const report = fs.existsSync(latest) ? latest : index;
 
 if (!fs.existsSync(report)) {
   console.error('Extent activity report not found. Run tests or npm run report:extent first.');
@@ -22,4 +25,7 @@ exec(command, { shell: true }, (error) => {
     process.exit(1);
   }
   console.log(`Opened ${report}`);
+  if (report === latest && fs.existsSync(index)) {
+    console.log(`Archive of all runs: ${index}`);
+  }
 });

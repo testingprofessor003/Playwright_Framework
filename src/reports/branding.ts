@@ -3,21 +3,48 @@ import path from 'path';
 
 /** Canonical logo shipped with the framework (copied into each report output folder). */
 export const REPORT_LOGO_FILENAME = 'testing-professor-logo.png';
+/** Compact tab icon generated from the Testing Professor mascot. */
+export const REPORT_FAVICON_FILENAME = 'testing-professor-favicon.png';
+export const REPORT_FAVICON_ICO_FILENAME = 'favicon.ico';
+
+function reportAssetPath(filename: string): string {
+  return path.join(__dirname, 'assets', filename);
+}
 
 export function reportLogoSourcePath(): string {
-  return path.join(__dirname, 'assets', REPORT_LOGO_FILENAME);
+  return reportAssetPath(REPORT_LOGO_FILENAME);
+}
+
+export function reportFaviconSourcePath(): string {
+  return reportAssetPath(REPORT_FAVICON_FILENAME);
+}
+
+function copyReportAsset(destDir: string, filename: string): string {
+  const source = reportAssetPath(filename);
+  if (!fs.existsSync(source)) {
+    throw new Error(`Report brand asset missing at ${source}`);
+  }
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(source, path.join(destDir, filename));
+  return filename;
 }
 
 /** Copy the brand logo into `destDir` and return the filename for relative HTML `src`. */
 export function ensureReportLogo(destDir: string): string {
-  const source = reportLogoSourcePath();
-  if (!fs.existsSync(source)) {
-    throw new Error(`Report logo missing at ${source}`);
-  }
-  fs.mkdirSync(destDir, { recursive: true });
-  const dest = path.join(destDir, REPORT_LOGO_FILENAME);
-  fs.copyFileSync(source, dest);
-  return REPORT_LOGO_FILENAME;
+  return copyReportAsset(destDir, REPORT_LOGO_FILENAME);
+}
+
+/** Copy PNG + ICO favicons into `destDir` and return the PNG filename for HTML `href`. */
+export function ensureReportFavicon(destDir: string): string {
+  copyReportAsset(destDir, REPORT_FAVICON_ICO_FILENAME);
+  return copyReportAsset(destDir, REPORT_FAVICON_FILENAME);
+}
+
+export function reportFaviconMarkup(href: string): string {
+  const icoHref = href.replace(/testing-professor-favicon\.png$/i, REPORT_FAVICON_ICO_FILENAME);
+  return `<link rel="icon" type="image/png" href="${href}"/>
+  <link rel="shortcut icon" href="${icoHref}"/>
+  <link rel="apple-touch-icon" href="${href}"/>`;
 }
 
 export function reportBrandCss(): string {

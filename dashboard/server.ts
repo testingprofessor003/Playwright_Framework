@@ -24,6 +24,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(process.cwd(), 'src', 'reports', 'assets')));
 app.use('/screenshots', express.static(path.join(process.cwd(), 'reports', 'screenshots')));
 
 function fromHistory(): HistoryRun[] {

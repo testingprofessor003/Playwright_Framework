@@ -36,7 +36,8 @@ module.exports = {
       'progress-bar',
       'html:reports/cucumber-report.html',
       'json:reports/cucumber-report.json',
-      'allure-cucumberjs/reporter',
+      // Cucumber keeps only one stdout formatter; give Allure a file target so it is not dropped.
+      ['allure-cucumberjs/reporter', 'reports/allure-results/.formatter-output'],
       './src/reports/extent/ExtentFormatter.js',
     ],
     formatOptions: {

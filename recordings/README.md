@@ -48,4 +48,4 @@ Controlled by `.env`:
 VIDEO=retain-on-failure   # or on | off
 ```
 
-When kept, Playwright writes a `.webm` under `recordings/test-runs/` (named from the scenario). The Extent report (`reports/extent/index.html`) embeds a player and a download link for that file on the test detail page. Do not use `test-runs` as input for the generate-from-video skill.
+When kept, Playwright writes a `.webm` under `recordings/test-runs/` (named from the scenario). The Extent report (`reports/extent/latest.html`, plus a per-run file under `reports/extent/history/`) embeds a player and a download link for that file on the test detail page. Do not use `test-runs` as input for the generate-from-video skill.

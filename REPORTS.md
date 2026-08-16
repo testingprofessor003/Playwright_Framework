@@ -2,13 +2,13 @@
 
 Run tests first so artifacts exist. Most HTML reports are also generated at the end of a run.
 
-Customized HTML UIs (Extent activity, custom failures, and the historical dashboard) show the **Testing Professor** logo from `src/reports/assets/testing-professor-logo.png` (copied next to each generated report).
+Customized HTML UIs (Extent activity, custom failures, and the historical dashboard) show the **Testing Professor** logo from `src/reports/assets/testing-professor-logo.png` (copied next to each generated report). Browser tabs use the matching favicon (`testing-professor-favicon.png` / `favicon.ico`).
 
 ## Quick open
 
 | Report | Command | File / URL |
 | --- | --- | --- |
-| Extent activity (steps, actions, screenshots, video, trace) | `npm run report:extent:open` | `reports/extent/index.html` |
+| Extent activity (steps, actions, screenshots, video, trace) | `npm run report:extent:open` | `reports/extent/latest.html` (archive: `index.html`) |
 | Custom failures (mapped error + AI note) | `npm run report:custom:open` | `reports/custom/failures.html` |
 | Cucumber HTML | open the file | `reports/cucumber-report.html` |
 | Allure | `npm run allure:serve` | local Allure server |
@@ -24,7 +24,9 @@ npm run report:extent
 npm run report:extent:open
 ```
 
-Or open `reports/extent/index.html` in a browser (Live Server works if the workspace root or `reports/` is served, so screenshot/video paths resolve).
+Or open `reports/extent/latest.html` for the newest run, or `reports/extent/index.html` for the archive of every execution (`reports/extent/history/<run-id>.html`). Screenshots are embedded as Base64 data-URIs in each HTML file (shareable as a single file). Videos/traces are copied under `reports/extent/videos|traces/` for `file://` access.
+
+With `SCREENSHOT=on` (or `retain-on-failure` on failures), scenario screenshots appear in the Extent detail pane and under Allure **After** fixtures.
 
 ## Custom failure report
 
@@ -99,10 +101,11 @@ Trace zips are also linked from the Extent test detail page.
 | --- | --- | --- |
 | Scenario screenshot | `reports/screenshots/` | `SCREENSHOT=on` or `retain-on-failure` |
 | Step screenshots | `reports/screenshots/steps/` | `STEP_SCREENSHOT=on` or `retain-on-failure` |
+| Action screenshots | `reports/screenshots/actions/` | `ACTION_SCREENSHOT=on` or `retain-on-failure` |
 | Video | `recordings/test-runs/` | `VIDEO=on` or `retain-on-failure` |
 | Trace | `reports/traces/` | `TRACE=on` or `retain-on-failure` |
 
-Open images/videos from those folders, or from Extent (`npm run report:extent:open`).
+Open images/videos from those folders, from Extent (`npm run report:extent:open`), or from Allure (`npm run allure:serve`) when `SCREENSHOT` / `STEP_SCREENSHOT` / `ACTION_SCREENSHOT` is enabled.
 
 ## Generate everything after a run
 

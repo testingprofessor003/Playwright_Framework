@@ -9,5 +9,6 @@ COPY . .
 
 ENV HEADLESS=true
 ENV CI=true
+ENV CHROMIUM_SANDBOX=false
 
 CMD ["npx", "cucumber-js"]

@@ -8,6 +8,7 @@ export type BrowserName = 'chromium' | 'firefox' | 'webkit';
 export type ExecutionEnv = 'local' | 'browserstack';
 export type DbType = 'mysql' | 'postgres';
 export type LlmApiMode = 'auto' | 'ollama' | 'openai';
+export type ColorScheme = 'light' | 'dark' | 'no-preference';
 
 function hostUrl(value: string | undefined, fallback: string): string {
   const raw = (value || fallback).trim();
@@ -39,6 +40,45 @@ function num(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function optional(value: string | undefined): string | undefined {
+  const trimmed = (value || '').trim();
+  return trimmed || undefined;
+}
+
+function csv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[,;]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function colorScheme(value: string | undefined): ColorScheme | undefined {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'light' || normalized === 'dark' || normalized === 'no-preference') {
+    return normalized;
+  }
+  return undefined;
+}
+
+function extraHttpHeaders(value: string | undefined): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const pair of csv(value)) {
+    const index = pair.indexOf('=');
+    if (index <= 0) continue;
+    const name = pair.slice(0, index).trim();
+    const headerValue = pair.slice(index + 1).trim();
+    if (name && headerValue) headers[name] = headerValue;
+  }
+  return headers;
+}
+
+function optionalPositive(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 /** LLM_ENABLED and OLLAMA_ENABLED are the same on/off switch. */
 const llmEnabled = bool(firstEnv('LLM_ENABLED', 'OLLAMA_ENABLED'), false);
 const llmHost = hostUrl(
@@ -57,6 +97,23 @@ export const env = {
   loginPauseMs: num(process.env.LOGIN_PAUSE_MS, 3000),
   clickPauseMs: num(process.env.CLICK_PAUSE_MS, 800),
   slowMo: num(process.env.SLOW_MO, 0),
+  launchTimeout: num(process.env.LAUNCH_TIMEOUT, 180000),
+  maximizeWindow: bool(process.env.MAXIMIZE_WINDOW, true),
+  ignoreHttpsErrors: bool(process.env.IGNORE_HTTPS_ERRORS, true),
+  acceptDownloads: bool(process.env.ACCEPT_DOWNLOADS, true),
+  bypassCsp: bool(process.env.BYPASS_CSP, false),
+  chromiumSandbox: bool(process.env.CHROMIUM_SANDBOX, !bool(process.env.CI, false)),
+  locale: process.env.LOCALE?.trim() || 'en-US',
+  timezone: optional(process.env.TIMEZONE),
+  colorScheme: colorScheme(process.env.COLOR_SCHEME),
+  userAgent: optional(process.env.USER_AGENT),
+  browserArgs: csv(process.env.BROWSER_ARGS),
+  permissions: csv(process.env.PERMISSIONS),
+  extraHttpHeaders: extraHttpHeaders(process.env.EXTRA_HTTP_HEADERS),
+  proxyServer: optional(process.env.PROXY_SERVER),
+  proxyUsername: optional(process.env.PROXY_USERNAME),
+  proxyPassword: optional(process.env.PROXY_PASSWORD),
+  deviceScaleFactor: optionalPositive(process.env.DEVICE_SCALE_FACTOR),
   parallel: num(process.env.PARALLEL, 1),
   retry: num(process.env.RETRY, 0),
   /** When true, failed locators try cache → heuristics → optional LLM alternatives. */
@@ -66,6 +123,8 @@ export const env = {
   selfHealTimeoutMs: num(process.env.SELF_HEAL_TIMEOUT_MS, 2500),
   screenshot: parseArtifactMode(process.env.SCREENSHOT, 'retain-on-failure'),
   stepScreenshot: parseArtifactMode(process.env.STEP_SCREENSHOT, 'off'),
+  /** Screenshot after every PlaywrightActions UI action (click/fill/goto/…). */
+  actionScreenshot: parseArtifactMode(process.env.ACTION_SCREENSHOT, 'off'),
   screenshotFullPage: bool(process.env.SCREENSHOT_FULL_PAGE, true),
   trace: parseArtifactMode(process.env.TRACE, 'off'),
   video: parseArtifactMode(process.env.VIDEO, 'retain-on-failure'),
@@ -105,6 +164,15 @@ export const env = {
   browserstackBrowser: process.env.BROWSERSTACK_BROWSER || 'chrome',
   browserstackBrowserVersion: process.env.BROWSERSTACK_BROWSER_VERSION || 'latest',
   browserstackBuildName: process.env.BROWSERSTACK_BUILD_NAME || 'playwright-bdd-framework',
+  browserstackProjectName: process.env.BROWSERSTACK_PROJECT_NAME || 'Playwright BDD Cucumber',
+  browserstackResolution: process.env.BROWSERSTACK_RESOLUTION || `${num(process.env.VIEWPORT_WIDTH, 1280)}x${num(process.env.VIEWPORT_HEIGHT, 720)}`,
+  browserstackLocal: bool(process.env.BROWSERSTACK_LOCAL, false),
+  browserstackVideo: bool(process.env.BROWSERSTACK_VIDEO, true),
+  browserstackNetworkLogs: bool(process.env.BROWSERSTACK_NETWORK_LOGS, true),
+  browserstackDebug: bool(process.env.BROWSERSTACK_DEBUG, true),
+  browserstackConsole: process.env.BROWSERSTACK_CONSOLE || 'info',
+  browserstackPlaywrightVersion: optional(process.env.BROWSERSTACK_PLAYWRIGHT_VERSION),
+  browserstackConnectTimeout: num(process.env.BROWSERSTACK_CONNECT_TIMEOUT, 120000),
   allureResultsDir: process.env.ALLURE_RESULTS_DIR || 'reports/allure-results',
   dashboardPort: num(process.env.DASHBOARD_PORT, 3000),
   runId: process.env.RUN_ID || '',

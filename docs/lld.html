@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8"/>
   <title>LLD · Playwright BDD Cucumber Framework</title>
+  <link rel="icon" type="image/png" href="../src/reports/assets/testing-professor-favicon.png"/>
+  <link rel="shortcut icon" href="../src/reports/assets/favicon.ico"/>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <style>
     body { font-family: Segoe UI, system-ui, sans-serif; color: #0f172a; max-width: 980px; margin: 40px auto; line-height: 1.55; }
@@ -51,7 +53,7 @@ docs/          HLD/LLD HTML and PDF</pre>
   <table>
     <tr><th>Area</th><th>Keys</th></tr>
     <tr><td>App</td><td><code>BASE_URL</code>, <code>APP_USERNAME</code>, <code>APP_PASSWORD</code>, <code>APP_ENCRYPTION_KEY</code></td></tr>
-    <tr><td>Browser</td><td><code>BROWSER</code>, <code>BROWSER_CHANNEL</code>, <code>HEADLESS</code>, <code>KEEP_BROWSER_OPEN</code>, <code>SLOW_MO</code>, <code>PARALLEL</code>, <code>LOGIN_PAUSE_MS</code>, <code>CLICK_PAUSE_MS</code></td></tr>
+    <tr><td>Browser</td><td><code>BROWSER</code>, <code>BROWSER_CHANNEL</code>, <code>HEADLESS</code>, <code>KEEP_BROWSER_OPEN</code>, <code>SLOW_MO</code>, <code>LAUNCH_TIMEOUT</code>, <code>MAXIMIZE_WINDOW</code>, <code>VIEWPORT_WIDTH</code>/<code>VIEWPORT_HEIGHT</code>, <code>LOCALE</code>, <code>TIMEZONE</code>, <code>COLOR_SCHEME</code>, <code>IGNORE_HTTPS_ERRORS</code>, <code>ACCEPT_DOWNLOADS</code>, <code>BROWSER_ARGS</code>, <code>PERMISSIONS</code>, <code>PROXY_SERVER</code>, <code>PARALLEL</code>, <code>LOGIN_PAUSE_MS</code>, <code>CLICK_PAUSE_MS</code></td></tr>
     <tr><td>Artifacts</td><td><code>SCREENSHOT</code>, <code>STEP_SCREENSHOT</code>, <code>SCREENSHOT_FULL_PAGE</code>, <code>VIDEO</code>, <code>TRACE</code> — each <code>off | on | retain-on-failure</code></td></tr>
     <tr><td>Self-heal</td><td><code>SELF_HEAL_ENABLED</code> (alias <code>SELF_HEAL</code>), <code>SELF_HEAL_USE_LLM</code>, <code>SELF_HEAL_TIMEOUT_MS</code></td></tr>
     <tr><td>LLM</td><td><code>LLM_ENABLED</code> is the on/off switch. <code>OLLAMA_ENABLED</code> is the same flag (alias), not a second setting. Host/model/key: <code>LLM_HOST</code>, <code>LLM_API</code>, <code>LLM_API_KEY</code>, <code>LLM_MODEL</code>, plus <code>LLM_ROUTE</code>, <code>LLM_ROUTER_MODEL</code>, <code>LLM_COMPLEX_MODEL</code>, <code>LLM_PREFER_BILLION</code>, <code>LLM_TIMEOUT_MS</code>. <code>OLLAMA_HOST</code> / <code>OLLAMA_MODEL</code> / <code>OLLAMA_API_KEY</code> alias the matching <code>LLM_*</code> names.</td></tr>
@@ -293,7 +295,7 @@ sequenceDiagram
 
   <h2>13. BrowserStack connect</h2>
   <pre>wss://cdp.browserstack.com/playwright?caps=&lt;urlencoded JSON&gt;</pre>
-  <p>Caps include browser, os, build, username, accessKey, scenario name. Local launch path is skipped when <code>EXECUTION_ENV=browserstack</code>; each scenario connects and closes its own remote browser.</p>
+  <p>Caps include mapped browser (chrome / edge / playwright-firefox / playwright-webkit), os, resolution, build, project, Playwright version, video/network/console logs, username, accessKey, and scenario name. Local launch path is skipped when <code>EXECUTION_ENV=browserstack</code>; each scenario connects and closes its own remote browser.</p>
 
   <h2>14. CI/CD</h2>
   <ul>

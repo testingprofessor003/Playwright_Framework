@@ -1,10 +1,21 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Playwright BDD · Execution Dashboard</title>
+  <link rel="icon" type="image/png" href="/testing-professor-favicon.png"/>
+  <link rel="shortcut icon" href="/favicon.ico"/>
+  <link rel="apple-touch-icon" href="/testing-professor-favicon.png"/>
   <link rel="stylesheet" href="/styles.css"/>
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem('pw-bdd-dashboard-theme');
+        if (theme === 'light' || theme === 'dark') document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) { /* ignore */ }
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -25,13 +36,16 @@
     </nav>
     <div class="aside-foot">
       <button id="triageBtn" class="primary">Run AI triage</button>
+      <button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle color theme">Theme: Dark</button>
       <p id="health" class="muted"></p>
     </div>
   </aside>
   <main>
     <header class="top">
       <h2 id="viewTitle">Overview</h2>
-      <select id="runFilter"><option value="">Latest runs</option></select>
+      <div class="top-actions">
+        <select id="runFilter"><option value="">Latest runs</option></select>
+      </div>
     </header>
 
     <section id="overview" class="view">
@@ -61,6 +75,11 @@
       <div id="insightList"></div>
     </section>
   </main>
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Screenshot preview" hidden>
+    <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close fullscreen screenshot">Close</button>
+    <img id="lightboxImg" alt="Fullscreen screenshot"/>
+    <div class="lightbox-hint">Click outside the image or press Esc to close</div>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

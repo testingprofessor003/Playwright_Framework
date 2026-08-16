@@ -7,7 +7,6 @@ import { SharedBuffer } from '../shared/SharedBuffer';
 import { createLogger, FrameworkLogger } from '../logger/logger';
 import { env } from '../config/env';
 import { getContextOptions, maximizeWindow } from '../config/browsers';
-import { VIDEOS_DIR } from '../config/paths';
 import { shouldRecordArtifact } from '../config/artifacts';
 import { LoginBusiness } from '../business/LoginBusiness';
 import { CustomerBusiness } from '../business/CustomerBusiness';
@@ -46,19 +45,13 @@ export class CustomWorld extends World {
   }
 
   async recreateContext(storageState?: string): Promise<void> {
-    const recordVideo = shouldRecordArtifact(env.video) ? { dir: VIDEOS_DIR } : undefined;
-
     if (this.context && shouldRecordArtifact(env.trace)) {
       await this.context.tracing.stop().catch(() => undefined);
     }
     await this.page?.close().catch(() => undefined);
     await this.context?.close().catch(() => undefined);
 
-    this.context = await this.browser.newContext({
-      ...getContextOptions(),
-      recordVideo,
-      storageState,
-    });
+    this.context = await this.browser.newContext(getContextOptions({ storageState }));
     this.context.setDefaultTimeout(env.defaultTimeout);
     this.context.setDefaultNavigationTimeout(env.navigationTimeout);
     this.page = await this.context.newPage();

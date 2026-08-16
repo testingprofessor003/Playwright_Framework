@@ -7,6 +7,7 @@ export const REPORTS_DIR = path.join(ROOT_DIR, 'reports');
 export const LOGS_DIR = path.join(ROOT_DIR, 'logs');
 export const SCREENSHOTS_DIR = path.join(REPORTS_DIR, 'screenshots');
 export const STEP_SCREENSHOTS_DIR = path.join(SCREENSHOTS_DIR, 'steps');
+export const ACTION_SCREENSHOTS_DIR = path.join(SCREENSHOTS_DIR, 'actions');
 /** Playwright scenario videos live under recordings/test-runs (not reports/videos). */
 export const RECORDINGS_DIR = path.join(ROOT_DIR, 'recordings');
 export const RECORDED_EXECUTIONS_DIR = path.join(RECORDINGS_DIR, 'recorded executions');
@@ -28,6 +29,7 @@ export function ensureDirs(): void {
     LOGS_DIR,
     SCREENSHOTS_DIR,
     STEP_SCREENSHOTS_DIR,
+    ACTION_SCREENSHOTS_DIR,
     RECORDINGS_DIR,
     RECORDED_EXECUTIONS_DIR,
     VIDEOS_DIR,
