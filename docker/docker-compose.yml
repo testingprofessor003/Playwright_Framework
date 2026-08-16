@@ -52,8 +52,8 @@ services:
       DB_USER: root
       DB_PASSWORD: password
       DB_NAME: playwright_framework
-      OLLAMA_ENABLED: "true"
-      OLLAMA_HOST: http://ollama:11434
+      LLM_ENABLED: "true"
+      LLM_HOST: http://ollama:11434
       DASHBOARD_PORT: 3000
     depends_on:
       mysql:
@@ -67,11 +67,16 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    command: ["npx", "cucumber-js", "--tags", "@smoke"]
+    command: ["npx", "cucumber-js", "--tags", "@smoke and not @example"]
     environment:
-      BASE_URL: ${BASE_URL:-https://example.com}
+      BASE_URL: ${BASE_URL:-https://corebanking.testingprofessor.net/}
       BROWSER: chromium
       HEADLESS: "true"
+      LOGIN_PAUSE_MS: "0"
+      CLICK_PAUSE_MS: "0"
+      APP_USERNAME: ${APP_USERNAME:-}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       DB_ENABLED: "true"
       DB_TYPE: mysql
       DB_HOST: mysql
@@ -79,7 +84,7 @@ services:
       DB_USER: root
       DB_PASSWORD: password
       DB_NAME: playwright_framework
-      OLLAMA_ENABLED: "false"
+      LLM_ENABLED: "false"
     depends_on:
       mysql:
         condition: service_healthy

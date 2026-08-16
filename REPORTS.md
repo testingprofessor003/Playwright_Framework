@@ -2,6 +2,8 @@
 
 Run tests first so artifacts exist. Most HTML reports are also generated at the end of a run.
 
+Customized HTML UIs (Extent activity, custom failures, and the historical dashboard) show the **Testing Professor** logo from `src/reports/assets/testing-professor-logo.png` (copied next to each generated report).
+
 ## Quick open
 
 | Report | Command | File / URL |
@@ -97,7 +99,7 @@ Trace zips are also linked from the Extent test detail page.
 | --- | --- | --- |
 | Scenario screenshot | `reports/screenshots/` | `SCREENSHOT=on` or `retain-on-failure` |
 | Step screenshots | `reports/screenshots/steps/` | `STEP_SCREENSHOT=on` or `retain-on-failure` |
-| Video | `reports/videos/` | `VIDEO=on` or `retain-on-failure` |
+| Video | `recordings/test-runs/` | `VIDEO=on` or `retain-on-failure` |
 | Trace | `reports/traces/` | `TRACE=on` or `retain-on-failure` |
 
 Open images/videos from those folders, or from Extent (`npm run report:extent:open`).

@@ -8,8 +8,13 @@ import { env } from '../../config/env';
  * when adding a real application page.
  */
 export class ExamplePage extends BasePage {
-  private readonly heading = this.page.locator('h1').first();
-  private readonly body = this.page.locator('body');
+  private get heading() {
+    return this.byPreferredOrXPath(this.page.locator('h1').first(), '//h1');
+  }
+
+  private get body() {
+    return this.byPreferredOrXPath(this.page.locator('body'), '//body');
+  }
 
   constructor(page: Page, logger: FrameworkLogger, context?: BrowserContext) {
     super(page, logger, context);

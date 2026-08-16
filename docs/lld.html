@@ -20,15 +20,18 @@
 </head>
 <body>
   <h1>Low Level Design (LLD)</h1>
-  <p class="meta">Playwright BDD Cucumber Framework · Version 1.1</p>
+  <p class="meta">Playwright BDD Cucumber Framework · Version 1.2 · Updated 16 Aug 2026</p>
 
   <h2>1. Directory map</h2>
   <pre>src/config     env, artifacts modes, browsers, BrowserStack, run IDs, paths
-src/world      CustomWorld (page, logger, shared buffer, stepIndex)
+src/world      CustomWorld (page, actions, business getters, shared, stepIndex)
 src/hooks      Before/After/AfterStep lifecycle, artifacts, triage
+src/business   BaseBusiness, LoginBusiness, CustomerBusiness, ApplicationBusiness
 src/pages      BasePage, LoginPage, AddCustomerPage, CustomersPage,
                OpenAccountPage, CustomerDashboardPage, templates/
-src/utils      PlaywrightActions, waits, files, dates
+src/utils      PlaywrightActions, WaitConditions, Assertions, SelfHeal,
+               waits, files, dates, secretCrypto
+src/auth       Optional manager session helpers (storageState)
 src/errors     FrameworkError hierarchy + mapper
 src/logger     Winston factory
 src/shared     SharedBuffer (scenario/worker/global)
@@ -36,6 +39,7 @@ src/db         MySQL/Postgres adapter, schema, repository
 src/reports    Custom HTML, JSON history, extent/ activity HTML
 src/ai         llmClient, modelRouter, FailureTriage, runTriage, llmHealth
 features/      Gherkin + step definitions (login, customer)
+recordings/    recorded executions/ (codegen sources), test-runs/ (scenario videos)
 dashboard/     Express API + Chart.js UI
 docker/        Dockerfile and compose
 .github/       GitHub Actions
@@ -47,19 +51,33 @@ docs/          HLD/LLD HTML and PDF</pre>
   <table>
     <tr><th>Area</th><th>Keys</th></tr>
     <tr><td>App</td><td><code>BASE_URL</code>, <code>APP_USERNAME</code>, <code>APP_PASSWORD</code>, <code>APP_ENCRYPTION_KEY</code></td></tr>
-    <tr><td>Browser</td><td><code>BROWSER</code>, <code>BROWSER_CHANNEL</code>, <code>HEADLESS</code>, <code>KEEP_BROWSER_OPEN</code>, <code>SLOW_MO</code>, <code>PARALLEL</code></td></tr>
+    <tr><td>Browser</td><td><code>BROWSER</code>, <code>BROWSER_CHANNEL</code>, <code>HEADLESS</code>, <code>KEEP_BROWSER_OPEN</code>, <code>SLOW_MO</code>, <code>PARALLEL</code>, <code>LOGIN_PAUSE_MS</code>, <code>CLICK_PAUSE_MS</code></td></tr>
     <tr><td>Artifacts</td><td><code>SCREENSHOT</code>, <code>STEP_SCREENSHOT</code>, <code>SCREENSHOT_FULL_PAGE</code>, <code>VIDEO</code>, <code>TRACE</code> — each <code>off | on | retain-on-failure</code></td></tr>
-    <tr><td>LLM</td><td><code>LLM_ENABLED</code>, <code>LLM_HOST</code>, <code>LLM_API</code>, <code>LLM_API_KEY</code>, <code>LLM_MODEL</code>, <code>LLM_ROUTE</code>, <code>LLM_ROUTER_MODEL</code>, <code>LLM_COMPLEX_MODEL</code>, <code>LLM_PREFER_BILLION</code>, <code>LLM_TIMEOUT_MS</code>. <code>OLLAMA_*</code> remain aliases.</td></tr>
+    <tr><td>Self-heal</td><td><code>SELF_HEAL_ENABLED</code> (alias <code>SELF_HEAL</code>), <code>SELF_HEAL_USE_LLM</code>, <code>SELF_HEAL_TIMEOUT_MS</code></td></tr>
+    <tr><td>LLM</td><td><code>LLM_ENABLED</code> is the on/off switch. <code>OLLAMA_ENABLED</code> is the same flag (alias), not a second setting. Host/model/key: <code>LLM_HOST</code>, <code>LLM_API</code>, <code>LLM_API_KEY</code>, <code>LLM_MODEL</code>, plus <code>LLM_ROUTE</code>, <code>LLM_ROUTER_MODEL</code>, <code>LLM_COMPLEX_MODEL</code>, <code>LLM_PREFER_BILLION</code>, <code>LLM_TIMEOUT_MS</code>. <code>OLLAMA_HOST</code> / <code>OLLAMA_MODEL</code> / <code>OLLAMA_API_KEY</code> alias the matching <code>LLM_*</code> names.</td></tr>
     <tr><td>Other</td><td><code>EXECUTION_ENV</code>, <code>DB_*</code>, <code>BROWSERSTACK_*</code>, <code>LOG_LEVEL</code></td></tr>
   </table>
+  <p>Paths of note: <code>reports/downloads/</code> (saved files), <code>reports/self-heal/healed-locators.json</code> (heal cache), <code>recordings/test-runs/</code> (videos).</p>
   <p>Run identity: <code>RUN_ID</code> env or file-locked <code>reports/.run-id</code> so all workers share one run.</p>
-  <p>Defaults: <code>LLM_HOST=http://localaiserver.testingprofessor.net</code>, <code>LLM_API=ollama</code>, <code>LLM_MODEL=auto</code>, <code>LLM_ROUTER_MODEL=llama3</code>, <code>LLM_COMPLEX_MODEL=gemma4:latest</code>, <code>LLM_PREFER_BILLION=32</code>.</p>
+  <p>Defaults: <code>LLM_HOST=http://localaiserver.testingprofessor.net</code>, <code>LLM_API=ollama</code>, <code>LLM_MODEL=auto</code>, <code>LLM_ROUTER_MODEL=llama3</code>, <code>LLM_COMPLEX_MODEL=gemma4:latest</code>, <code>LLM_PREFER_BILLION=32</code>, <code>SELF_HEAL_ENABLED=false</code>, <code>CLICK_PAUSE_MS=800</code>.</p>
 
   <h2>3. CustomWorld</h2>
   <pre>browser, context, page, actions, logger, shared
 runId, workerId, scenarioId, scenarioName, featureName, tags
-stepIndex, screenshotPath, videoPath, tracePath, lastError, browserName</pre>
-  <p>Constructed by Cucumber. Logger is rebound in <code>Before</code> with correlation metadata. <code>stepIndex</code> increments in <code>BeforeStep</code> for step-screenshot file names.</p>
+stepIndex, screenshotPath, videoPath, tracePath, lastError, browserName
+get waits / asserts          → from PlaywrightActions
+get login / customer / application → business facades</pre>
+  <p>Constructed by Cucumber. Logger is rebound in <code>Before</code> with correlation metadata. <code>stepIndex</code> increments in <code>BeforeStep</code> for step-screenshot file names. Thin steps call <code>this.customer.*</code> / <code>this.login.*</code> / <code>this.application.*</code>.</p>
+
+  <h2>3.1 Business layer</h2>
+  <table>
+    <tr><th>Class</th><th>Responsibility</th></tr>
+    <tr><td>BaseBusiness</td><td>Access to world, actions, logger, shared buffer</td></tr>
+    <tr><td>LoginBusiness</td><td>Launch app, staff sign-in, bank-manager entry</td></tr>
+    <tr><td>CustomerBusiness</td><td>Add customer, search list, open accounts, customer login/deposit</td></tr>
+    <tr><td>ApplicationBusiness</td><td>Cross-cutting app navigation helpers</td></tr>
+  </table>
+  <p>Call chain: <code>Feature → Step → Business → Page → PlaywrightActions</code>.</p>
 
   <h2>4. Hooks</h2>
   <div class="mermaid">
@@ -76,7 +94,7 @@ flowchart TD
   Shot -->|no| EndStep
   AF[After] --> ScShot{SCREENSHOT keep?}
   ScShot --> StopTrace{TRACE keep? stop zip : discard}
-  StopTrace --> Video{VIDEO keep? attach webm : video.delete}
+  StopTrace --> Video{VIDEO keep? save under recordings/test-runs + Extent link : video.delete}
   Video --> Persist[history + DB]
   AA[AfterAll] --> Triage[runTriage on primary worker if LLM_ENABLED]
   Triage --> Extent[generateExtentReport with insights]
@@ -93,9 +111,41 @@ flowchart TD
   <p>Artifact helpers: <code>src/config/artifacts.ts</code> — <code>shouldRecordArtifact</code> / <code>shouldKeepArtifact</code>.</p>
 
   <h2>5. PlaywrightActions API</h2>
-  <p>All methods log at debug/info, emit Extent activities, and wrap failures with <code>mapPlaywrightError</code>.</p>
-  <p>Methods: <code>goto, click, dblClick, fill, type, clear, select, selectRandom, hover, check, uncheck, upload, download, frame, press, handleDialog, waitForVisible, waitForHidden, waitForUrl, waitForLoadState, getText, getAttribute, getCount, isVisible, isEnabled, screenshot, getTitle, assertVisible, assertText, assertTitle, assertTitleNotEmpty, scrollIntoView</code>.</p>
-  <p><code>select</code> accepts a value, <code>{ label }</code>, <code>{ index }</code>, or blank (random option). <code>selectRandom</code> can <code>exclude</code> labels such as <code>No Category</code>.</p>
+  <p>All methods log at debug/info, emit Extent activities, and wrap failures with <code>mapPlaywrightError</code>. Locator verbs use <code>runWithHeal</code> when <code>SELF_HEAL_ENABLED=true</code>.</p>
+  <table>
+    <tr><th>Group</th><th>Methods</th></tr>
+    <tr><td>Navigation / core</td><td><code>goto</code>, <code>click</code>, <code>dblClick</code>, <code>fill</code>, <code>type</code>, <code>clear</code>, <code>select</code>, <code>selectRandom</code>, <code>hover</code>, <code>check</code>, <code>uncheck</code>, <code>press</code>, <code>pressOn</code></td></tr>
+    <tr><td>Drag and drop</td><td><code>dragAndDrop</code>, <code>dragAndDropByMouse</code>, <code>dragByOffset</code></td></tr>
+    <tr><td>Frames</td><td><code>frame</code>, <code>nestedFrame</code>, <code>inFrame</code>, <code>getFrameByUrl</code>, <code>getFrameByName</code>, <code>requireFrameByUrl</code>, <code>requireFrameByName</code>, <code>clickInFrame</code>, <code>fillInFrame</code></td></tr>
+    <tr><td>Shadow DOM</td><td><code>inShadow</code>, <code>shadowLocator</code>, <code>deepShadowLocator</code>, <code>clickInShadow</code>, <code>fillInShadow</code>, <code>dblClickInShadow</code></td></tr>
+    <tr><td>Upload / download</td><td><code>upload</code>, <code>uploadPayload</code>, <code>clearUpload</code>, <code>download</code>, <code>downloadByClick</code>, <code>downloadAndSave</code>, <code>downloadByClickAndSave</code></td></tr>
+    <tr><td>Scroll</td><td><code>scrollIntoView</code>, <code>scrollBy</code>, <code>scrollTo</code>, <code>scrollToTop</code>, <code>scrollToBottom</code>, <code>scrollElementBy</code>, <code>scrollElementTo</code>, <code>mouseWheel</code>, <code>getScrollPosition</code></td></tr>
+    <tr><td>JavaScript</td><td><code>evaluate</code>, <code>evaluateScript</code>, <code>evaluateOnLocator</code>, <code>evaluateHandle</code>, <code>dispatchDomEvent</code>, <code>setValueByJs</code>, <code>getPageProperty</code>, <code>getDocumentReadyState</code></td></tr>
+    <tr><td>Wait / assert / read</td><td><code>waitForVisible</code>, <code>waitForHidden</code>, <code>waitForUrl</code>, <code>waitForLoadState</code>, <code>getText</code>, <code>getAttribute</code>, <code>getCount</code>, <code>isVisible</code>, <code>isEnabled</code>, <code>assertVisible</code>, <code>assertText</code>, <code>assertTitle*</code>, <code>screenshot</code></td></tr>
+    <tr><td>Windows</td><td><code>launchApplication*</code>, <code>clickAndSwitchToNewWindow*</code>, <code>switchToWindow*</code>, <code>switchToParentWindow</code>, <code>closeCurrentWindow</code>, <code>waitForPopupCloseAndSwitchToParent</code>, <code>waitForWindowWithUrl</code></td></tr>
+  </table>
+  <p><code>select</code> accepts a value, <code>{ label }</code>, <code>{ index }</code>, or blank (random option). <code>selectRandom</code> can <code>exclude</code> labels such as <code>No Category</code>. Downloads save under <code>reports/downloads/</code>.</p>
+  <p>Related utilities: <code>WaitConditions</code> (including <code>observe</code> pause after clicks), <code>Assertions</code>, <code>SelfHeal.resolveHealedLocator</code>.</p>
+
+  <h2>5.1 Self-heal</h2>
+  <div class="mermaid">
+flowchart TD
+  Act[runWithHeal action] --> Try[Original locator]
+  Try -->|pass| Done[Return]
+  Try -->|ELEMENT or TIMEOUT| Flag{SELF_HEAL_ENABLED?}
+  Flag -->|no| Fail[Rethrow FrameworkError]
+  Flag -->|yes| Cache[healed-locators.json]
+  Cache -->|hit| Retry1[Retry healed]
+  Cache -->|miss| Heur[role / text / placeholder / label / css]
+  Heur -->|ok| Store[Remember + retry]
+  Heur -->|miss| Llm{SELF_HEAL_USE_LLM?}
+  Llm -->|yes| Suggest[LLM locator suggestion]
+  Suggest --> Store
+  Llm -->|no| Fail
+  Retry1 --> Done
+  Store --> Done
+  </div>
+  <p>Successful heals are logged as Extent <code>selfHeal</code> activities. Prefer fixing page-object locators; treat heal as a resilience layer, not the primary design.</p>
 
   <h2>6. Page Object pattern</h2>
   <p>Core banking pages (not only templates):</p>
@@ -247,7 +297,7 @@ sequenceDiagram
 
   <h2>14. CI/CD</h2>
   <ul>
-    <li>GitHub Actions: matrix chromium/firefox/webkit, artifact upload, optional BrowserStack job.</li>
+    <li>GitHub Actions: matrix chromium/firefox/webkit against <code>https://corebanking.testingprofessor.net/</code>; required secrets <code>APP_USERNAME</code> / <code>APP_PASSWORD</code> (optional <code>APP_ENCRYPTION_KEY</code>); <code>LLM_ENABLED=false</code>; tags <code>@smoke and not @example</code>; artifact upload; optional BrowserStack job.</li>
     <li>Jenkins: install, optional migrate, test, Allure + HTML publisher.</li>
     <li>Docker: official Playwright image; compose brings MySQL, Postgres, Ollama, dashboard, tests profile. Hosted LLM is selected with <code>LLM_HOST</code> / <code>LLM_API_KEY</code>.</li>
   </ul>
@@ -270,7 +320,10 @@ sequenceDiagram
   <p>Tags: <code>npm run test:tags -- @smoke and not @wip</code></p>
 
   <h2>16. Logging format</h2>
-  <p>Console: timestamp, level, <code>runId|workerId|scenarioId</code>, message. Files: JSON in <code>logs/framework.log</code> and <code>logs/errors.log</code> with rotation. Step screenshots and LLM route decisions are logged at info.</p>
+  <p>Console: timestamp, level, <code>runId|workerId|scenarioId</code>, message. Files: JSON in <code>logs/framework.log</code> and <code>logs/errors.log</code> with rotation. Step screenshots, self-heal retries, and LLM route decisions are logged at info.</p>
+
+  <h2>17. Related documents</h2>
+  <p>See <a href="./hld.html">High Level Design (HLD)</a> for system context and deployment views. Stakeholder briefing: <code>docs/hld-stakeholder.docx</code> / <code>docs/hld-stakeholder.pptx</code> (<code>npm run docs:hld:stakeholder</code>). Interactive module summaries: Cursor canvases <code>hld-architecture</code> and <code>lld-modules</code>.</p>
 
   <script>mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
 </body>

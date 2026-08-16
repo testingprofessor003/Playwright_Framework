@@ -13,6 +13,10 @@ Given('I launch {string} in a new window', async function (this: CustomWorld, ur
   await this.login.launchInNewWindow(url);
 });
 
+Given('I reuse the saved bank manager session', { timeout: 180000 }, async function (this: CustomWorld) {
+  await this.login.reuseSavedBankManagerSession();
+});
+
 When('I switch to the window with URL {string}', async function (this: CustomWorld, url: string) {
   await this.login.switchToWindowByUrl(url);
 });

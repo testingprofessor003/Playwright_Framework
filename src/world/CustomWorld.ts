@@ -6,6 +6,9 @@ import { WaitConditions } from '../utils/WaitConditions';
 import { SharedBuffer } from '../shared/SharedBuffer';
 import { createLogger, FrameworkLogger } from '../logger/logger';
 import { env } from '../config/env';
+import { getContextOptions, maximizeWindow } from '../config/browsers';
+import { VIDEOS_DIR } from '../config/paths';
+import { shouldRecordArtifact } from '../config/artifacts';
 import { LoginBusiness } from '../business/LoginBusiness';
 import { CustomerBusiness } from '../business/CustomerBusiness';
 import { ApplicationBusiness } from '../business/ApplicationBusiness';
@@ -40,6 +43,31 @@ export class CustomWorld extends World {
   setActivePage(page: Page): void {
     this.page = page;
     this.actions?.setPage(page);
+  }
+
+  async recreateContext(storageState?: string): Promise<void> {
+    const recordVideo = shouldRecordArtifact(env.video) ? { dir: VIDEOS_DIR } : undefined;
+
+    if (this.context && shouldRecordArtifact(env.trace)) {
+      await this.context.tracing.stop().catch(() => undefined);
+    }
+    await this.page?.close().catch(() => undefined);
+    await this.context?.close().catch(() => undefined);
+
+    this.context = await this.browser.newContext({
+      ...getContextOptions(),
+      recordVideo,
+      storageState,
+    });
+    this.context.setDefaultTimeout(env.defaultTimeout);
+    this.context.setDefaultNavigationTimeout(env.navigationTimeout);
+    this.page = await this.context.newPage();
+    this.actions = new PlaywrightActions(this.page, this.logger, this.context);
+    await maximizeWindow(this.page, this.context);
+
+    if (shouldRecordArtifact(env.trace)) {
+      await this.context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+    }
   }
 
   get waits(): WaitConditions {

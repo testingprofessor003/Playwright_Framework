@@ -6,7 +6,7 @@ Feature: Create customers and accounts
 
   Background:
     Given I launch the core banking application
-    And I sign in with valid credentials
+    And I reuse the saved bank manager session
     And I open the bank manager portal
 
   @e2e @smoke @regression

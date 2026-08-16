@@ -115,6 +115,12 @@ export class LoginPage extends BasePage {
     });
   }
 
+  async isOnLoginScreen(): Promise<boolean> {
+    const emailVisible = await this.actions.isVisible(this.emailInput, 'Email address');
+    const signInVisible = await this.actions.isVisible(this.signInButton, 'Sign in');
+    return emailVisible || signInVisible;
+  }
+
   async assertSignedIn(): Promise<void> {
     await this.asserts.titleNotEmpty();
     const stillOnEmail = await this.actions.isVisible(this.emailInput, 'Email address');

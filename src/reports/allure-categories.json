@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Element / locator issues",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*PW_ELEMENT_NOT_FOUND.*|.*PW_STRICT_MODE.*"
+  },
+  {
+    "name": "Timeouts",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*PW_TIMEOUT.*"
+  },
+  {
+    "name": "Navigation / environment",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*PW_NAVIGATION.*"
+  },
+  {
+    "name": "Browser / target closed",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*PW_TARGET_CLOSED.*|.*PW_BROWSER_LAUNCH.*"
+  },
+  {
+    "name": "Assertions",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*PW_ASSERTION.*"
+  }
+]

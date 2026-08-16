@@ -2,7 +2,7 @@
 
 This repo is a Playwright + Cucumber BDD framework with page objects.
 
-When the user provides a screen recording or asks to generate Playwright from a video, follow `.claude/skills/playwright-from-video/SKILL.md`:
+When the user provides a screen recording or asks to generate Playwright from a video, fetch videos from `recordings/recorded executions/` and follow `.claude/skills/playwright-from-video/SKILL.md`:
 
 1. Map each distinct screen in the recording.
 2. Reuse `LoginPage` and existing customer pages when those screens appear.

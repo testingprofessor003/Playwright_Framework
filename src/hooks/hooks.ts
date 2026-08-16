@@ -66,6 +66,25 @@ function stepKeyword(pickleStep: { type?: string | number }): string {
   return '';
 }
 
+/** Move Playwright's temp webm into recordings/test-runs with a readable scenario name. */
+async function persistScenarioVideo(sourcePath: string, scenarioName: string, scenarioId: string): Promise<string> {
+  fs.mkdirSync(VIDEOS_DIR, { recursive: true });
+  const target = path.join(
+    VIDEOS_DIR,
+    `${sanitizeFileName(scenarioName)}-${scenarioId.slice(0, 8)}.webm`,
+  );
+  if (path.resolve(sourcePath) === path.resolve(target)) {
+    return target;
+  }
+  try {
+    fs.renameSync(sourcePath, target);
+  } catch {
+    fs.copyFileSync(sourcePath, target);
+    fs.unlinkSync(sourcePath);
+  }
+  return target;
+}
+
 BeforeAll(async function () {
   const runId = await getOrCreateRunId();
   const runName = env.runName || buildRunName(env.browser, env.executionEnv);
@@ -239,9 +258,11 @@ After(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
       await this.context?.close();
       if (video) {
         if (shouldKeepArtifact(env.video, failed)) {
-          this.videoPath = await video.path();
-          if (this.videoPath && fs.existsSync(this.videoPath)) {
+          const rawPath = await video.path();
+          if (rawPath && fs.existsSync(rawPath)) {
+            this.videoPath = await persistScenarioVideo(rawPath, this.scenarioName, this.scenarioId);
             await this.attach(fs.readFileSync(this.videoPath), 'video/webm');
+            this.logger.info(`Scenario video saved: ${this.videoPath}`);
           }
         } else {
           await video.delete();

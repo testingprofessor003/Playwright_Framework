@@ -14,29 +14,56 @@
     code, pre { background: #f1f5f9; }
     pre { padding: 12px; overflow: auto; }
     .meta { color: #475569; }
-    .box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; }
+    .box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; margin: 12px 0 24px; }
+    .exec { background: #eff6ff; border-left: 4px solid #0284c7; }
+    .brand-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+    .brand-bar img { width: 72px; height: 72px; border-radius: 50%; background: #facc15; object-fit: contain; }
     .mermaid { margin: 16px 0 28px; }
     @media print { body { margin: 0; } }
   </style>
 </head>
 <body>
-  <h1>High Level Design (HLD)</h1>
-  <p class="meta">Playwright BDD Cucumber Framework · Version 1.2 · TypeScript</p>
+  <div class="brand-bar">
+    <img src="../src/reports/assets/testing-professor-logo.png" alt="Testing Professor" width="72" height="72"/>
+    <div>
+      <h1 style="border:0;margin:0;padding:0;">High Level Design (HLD)</h1>
+      <p class="meta" style="margin:4px 0 0;">Testing Professor · Playwright BDD Cucumber Framework</p>
+    </div>
+  </div>
+  <p class="meta">Version 1.4 · TypeScript · Updated 16 Aug 2026 · Stakeholder briefing pack also available as Word and PowerPoint</p>
+
+  <h2>0. Executive summary (for stakeholders)</h2>
+  <div class="box exec">
+    <p><strong>What it is:</strong> A reusable UI test automation platform that describes business flows in plain English (Gherkin), drives a real browser with Playwright, and produces branded HTML reports, videos, and optional AI failure insights.</p>
+    <p><strong>What it tests today:</strong> The core banking application at <code>https://corebanking.testingprofessor.net/</code> — staff login, bank-manager customer lifecycle (add / search / open accounts), and customer deposit journeys.</p>
+    <p><strong>Why it matters:</strong> Faster regression feedback, living documentation of business rules, consistent evidence (screenshots, video, traces), and CI that can run against the real AUT on Chromium, Firefox, and WebKit.</p>
+    <p><strong>Delivery:</strong> Local runs, Docker, Jenkins, and GitHub Actions against the real AUT. Credentials are never committed — they come from <code>.env</code> locally or CI secrets in the pipeline.</p>
+  </div>
 
   <h2>1. Purpose</h2>
-  <p>This framework is a reusable UI automation platform using Playwright and Cucumber BDD. It standardizes Gherkin features, thin step definitions, business classes, page objects, actions, wait/assertion utilities, logging, error classification, env-driven artifacts (step screenshots, video, traces), Extent-style activity reporting, CI/CD, BrowserStack, database-backed history, and local LLM failure triage with complexity-based model routing.</p>
+  <p>This framework is a reusable UI automation platform using Playwright and Cucumber BDD. It standardizes Gherkin features, thin step definitions, business classes, page objects, a rich action utility (interactions, frames, shadow DOM, uploads/downloads, scrolling, JavaScript), optional self-healing locators, wait/assertion helpers, logging, error classification, env-driven artifacts (step screenshots, video, traces), Testing Professor–branded Extent-style activity reporting, CI/CD, BrowserStack, database-backed history, and local LLM failure triage with complexity-based model routing.</p>
   <p>The current application under test is the core banking site at <code>https://corebanking.testingprofessor.net/</code>.</p>
 
-  <h2>2. Goals</h2>
+  <h2>2. Business outcomes and goals</h2>
+  <table>
+    <tr><th>Outcome</th><th>How the framework supports it</th></tr>
+    <tr><td>Readable tests for BA / QA / Dev</td><td>Gherkin features; thin steps call business classes</td></tr>
+    <tr><td>Maintainable automation</td><td>Page Object Model + single PlaywrightActions utility</td></tr>
+    <tr><td>Faster failure analysis</td><td>Extent activity log, custom failure HTML, optional LLM triage</td></tr>
+    <tr><td>Evidence for audits / demos</td><td>Screenshots, scenario video, Playwright traces, branded reports</td></tr>
+    <tr><td>CI confidence</td><td>GitHub Actions / Jenkins / Docker against real AUT</td></tr>
+    <tr><td>Resilience</td><td>Optional self-heal; DB and LLM are optional add-ons</td></tr>
+  </table>
   <ul>
     <li>BDD-first authoring with Gherkin features and thin step definitions that call business classes.</li>
-    <li>Page Object Model with a single action utility wrapping Playwright APIs.</li>
+    <li>Page Object Model with a single action utility wrapping Playwright APIs (including drag/drop, frames, shadow, file I/O, scroll, and <code>evaluate</code>).</li>
+    <li>Optional self-heal for broken locators (<code>SELF_HEAL_ENABLED</code>): cache → heuristics → optional LLM.</li>
     <li>Deterministic error taxonomy wrapping Playwright exceptions.</li>
     <li>Worker-safe shared data for parallel and cross-browser runs.</li>
-    <li>Allure, custom failure HTML, Extent activity report, and historical dashboard.</li>
-    <li>Env-driven per-step screenshots, scenario screenshots, video, and Playwright traces.</li>
+    <li>Allure, custom failure HTML, Extent activity report (Testing Professor branded), and historical dashboard.</li>
+    <li>Env-driven per-step screenshots, scenario screenshots, video under <code>recordings/test-runs/</code>, and Playwright traces.</li>
     <li>Optional MySQL or PostgreSQL persistence.</li>
-    <li>GitHub Actions, Jenkins, Docker, and BrowserStack integration.</li>
+    <li>GitHub Actions, Jenkins, Docker, and BrowserStack integration against the real AUT.</li>
     <li>Hosted Ollama LLM triage: llama3 routes work; complex analysis prefers ~32B models, then <code>gemma4:latest</code>.</li>
   </ul>
 
@@ -86,6 +113,8 @@ flowchart TB
     Biz[Business classes]
     Wait[WaitConditions]
     Assert[Assertions]
+    Heal[SelfHeal]
+    Act[PlaywrightActions]
   end
   subgraph Report["Reporting"]
     Allure[Allure]
@@ -108,18 +137,20 @@ flowchart TB
     <tr><th>Category</th><th>Tool</th><th>Role in this project</th></tr>
     <tr><td rowspan="4">Language and runtime</td><td>Node.js 24 LTS+</td><td>Runtime for Cucumber, Playwright, dashboard, and scripts</td></tr>
     <tr><td>TypeScript 7</td><td>Typed features, steps, business classes, and page objects</td></tr>
-    <tr><td>tsx</td><td>Executes TypeScript directly (hooks, reports, dashboard, docs PDF)</td></tr>
+    <tr><td>tsx</td><td>Executes TypeScript directly (hooks, reports, dashboard, docs)</td></tr>
     <tr><td>dotenv / cross-env</td><td>Environment config and cross-platform test scripts</td></tr>
     <tr><td rowspan="4">BDD and automation</td><td>Cucumber.js (<code>@cucumber/cucumber</code>)</td><td>Test runner: Gherkin features, tags, parallel, formatters</td></tr>
     <tr><td>Gherkin</td><td>Business-readable scenarios in <code>features/*.feature</code></td></tr>
     <tr><td>Playwright 1.62.1</td><td>Browser automation, codegen, traces, video, headed/headless</td></tr>
     <tr><td>Playwright browsers</td><td>Chromium/Chrome, Firefox, and WebKit coverage</td></tr>
-    <tr><td rowspan="4">Design and data</td><td>Page Object Model</td><td>Locators and UI actions per screen</td></tr>
+    <tr><td rowspan="6">Design and data</td><td>Page Object Model</td><td>Locators and UI actions per screen</td></tr>
     <tr><td>Business classes</td><td>Flow orchestration called from thin step definitions</td></tr>
+    <tr><td>PlaywrightActions</td><td>Clicks, drag/drop, frames, shadow DOM, upload/download, scroll, JS evaluate</td></tr>
     <tr><td>WaitConditions / Assertions</td><td>Shared waits, observe-pause after button clicks, assertions</td></tr>
+    <tr><td>Self-heal (<code>SELF_HEAL_ENABLED</code>)</td><td>Optional runtime locator recovery: cache → heuristics → optional LLM</td></tr>
     <tr><td>@faker-js/faker</td><td>Random customer and deposit test data</td></tr>
     <tr><td rowspan="5">Reporting and logs</td><td>Allure (<code>allure-cucumberjs</code> + CLI)</td><td>Standard test report from Cucumber results</td></tr>
-    <tr><td>Extent-style HTML</td><td>Step and Playwright action activity, screenshots, video, traces, AI notes</td></tr>
+    <tr><td>Extent-style HTML</td><td>Branded step/action activity, screenshots, video, traces, AI notes</td></tr>
     <tr><td>Custom failures.html</td><td>Failure-focused HTML for root-cause review</td></tr>
     <tr><td>Winston</td><td>Structured console and file logging</td></tr>
     <tr><td>Express dashboard</td><td>Historical runs, trends, and AI insights on port 3000</td></tr>
@@ -136,15 +167,37 @@ flowchart TB
     <tr><th>Layer</th><th>Components</th><th>Responsibility</th></tr>
     <tr><td>Authoring</td><td>features/*.feature, features/steps</td><td>Business-readable scenarios; steps only call business methods</td></tr>
     <tr><td>Business</td><td>LoginBusiness, CustomerBusiness, ApplicationBusiness</td><td>Orchestrate flows, shared buffer, page-object calls</td></tr>
-    <tr><td>Runtime</td><td>CustomWorld, hooks, Playwright browser/context/page</td><td>Lifecycle, artifacts, correlation IDs</td></tr>
+    <tr><td>Runtime</td><td>CustomWorld, hooks, Playwright browser/context/page</td><td>Lifecycle, artifacts, correlation IDs; exposes <code>this.login</code> / <code>this.customer</code> / <code>this.application</code></td></tr>
     <tr><td>POM</td><td>BasePage, LoginPage, AddCustomerPage, CustomersPage, OpenAccountPage, CustomerDashboardPage</td><td>Locators and page behaviors for core banking</td></tr>
-    <tr><td>Actions</td><td>PlaywrightActions, WaitConditions, Assertions</td><td>Click (with observe pause), fill, select, wait, assert, mapped errors</td></tr>
-    <tr><td>Artifacts</td><td>hooks + SCREENSHOT / STEP_SCREENSHOT / VIDEO / TRACE</td><td>Capture, retain-on-failure, attach to reports</td></tr>
-    <tr><td>Cross-cutting</td><td>Logger, SharedBuffer, FrameworkError</td><td>Observability, data sharing, taxonomy</td></tr>
+    <tr><td>Actions</td><td>PlaywrightActions, WaitConditions, Assertions, SelfHeal</td><td>UI verbs, waits, asserts, optional locator healing, mapped errors</td></tr>
+    <tr><td>Artifacts</td><td>hooks + SCREENSHOT / STEP_SCREENSHOT / VIDEO / TRACE</td><td>Capture, retain-on-failure, attach to reports; downloads under <code>reports/downloads/</code></td></tr>
+    <tr><td>Cross-cutting</td><td>Logger, SharedBuffer, FrameworkError, optional manager session</td><td>Observability, data sharing, taxonomy, auth helpers</td></tr>
     <tr><td>Persistence</td><td>DB adapters, history JSON</td><td>Run/scenario/failure/insight storage</td></tr>
     <tr><td>Insights</td><td>llmClient, modelRouter, FailureTriage</td><td>Catalog models, route by complexity, classify failures</td></tr>
     <tr><td>Presentation</td><td>Allure, custom HTML, Extent HTML, dashboard</td><td>Step activity, screenshots, video, traces, AI notes</td></tr>
-    <tr><td>Delivery</td><td>GitHub Actions, Jenkins, Docker</td><td>Repeatable CI/CD</td></tr>
+    <tr><td>Delivery</td><td>GitHub Actions, Jenkins, Docker</td><td>Repeatable CI/CD against core banking AUT</td></tr>
+  </table>
+
+  <h2>5.1 Call chain</h2>
+  <p><code>Feature → Step → Business → Page → PlaywrightActions → Playwright</code>. Self-heal sits inside PlaywrightActions when enabled.</p>
+  <div class="mermaid">
+flowchart LR
+  F[Feature] --> S[Step]
+  S --> B[Business]
+  B --> P[Page object]
+  P --> A[PlaywrightActions]
+  A -->|fail + SELF_HEAL| H[SelfHeal]
+  H -->|healed locator| A
+  A --> PW[Playwright]
+  </div>
+
+  <h2>5.2 Current automation scope</h2>
+  <table>
+    <tr><th>Area</th><th>Coverage</th></tr>
+    <tr><td>Login</td><td>Staff sign-in with encrypted credentials from <code>.env</code> / CI secrets</td></tr>
+    <tr><td>Customers</td><td>Add customer, search (first name), open accounts, data-driven examples</td></tr>
+    <tr><td>Customer portal</td><td>Continue as customer, deposit flows (e2e tags)</td></tr>
+    <tr><td>Quality tags</td><td><code>@smoke</code>, <code>@positive</code>, <code>@negative</code>, <code>@datadriven</code>, <code>@e2e</code></td></tr>
   </table>
 
   <h2>6. Execution flow</h2>
@@ -165,8 +218,11 @@ sequenceDiagram
   C->>S: Match Gherkin step
   S->>B: Call business method
   B->>P: Orchestrate page methods
-  P->>A: click/fill/select/wait/assert
-  A->>E: log action
+  P->>A: click/fill/select/wait/assert/drag/frame/JS
+  alt SELF_HEAL_ENABLED and element/timeout failure
+    A->>A: SelfHeal cache / heuristics / optional LLM
+  end
+  A->>E: log action / selfHeal activity
   A-->>P: success or FrameworkError
   C->>H: AfterStep screenshot if configured
   H->>E: attach step screenshot / failure
@@ -185,8 +241,10 @@ flowchart TB
   Env[".env: SCREENSHOT / STEP_SCREENSHOT / VIDEO / TRACE"] --> Hooks[Cucumber hooks]
   Hooks -->|AfterStep| StepShot[reports/screenshots/steps]
   Hooks -->|After scenario| Shot[reports/screenshots]
-  Hooks -->|context.recordVideo| Vid[reports/videos]
+  Hooks -->|context.recordVideo| Vid[recordings/test-runs]
   Hooks -->|tracing.stop zip| Tr[reports/traces]
+  Actions[PlaywrightActions download*] --> Dl[reports/downloads]
+  Heal[SelfHeal cache] --> HealStore[reports/self-heal]
   StepShot --> Extent[reports/extent/index.html]
   Shot --> Extent
   Vid --> Extent
@@ -197,8 +255,22 @@ flowchart TB
     <tr><th>Flag</th><th>Scope</th><th>Output</th></tr>
     <tr><td><code>STEP_SCREENSHOT</code></td><td>After every Gherkin step</td><td><code>reports/screenshots/steps/</code>, inline in Extent</td></tr>
     <tr><td><code>SCREENSHOT</code></td><td>End of scenario</td><td><code>reports/screenshots/</code></td></tr>
-    <tr><td><code>VIDEO</code></td><td>Browser context recording</td><td><code>reports/videos/*.webm</code></td></tr>
+    <tr><td><code>VIDEO</code></td><td>Browser context recording</td><td><code>recordings/test-runs/*.webm</code>, player + link in Extent</td></tr>
     <tr><td><code>TRACE</code></td><td>Playwright trace</td><td><code>reports/traces/*.zip</code></td></tr>
+    <tr><td><code>SELF_HEAL_ENABLED</code></td><td>Action retries</td><td><code>reports/self-heal/healed-locators.json</code> + Extent <code>selfHeal</code> activities</td></tr>
+  </table>
+
+  <h2>7.1 Action capability groups</h2>
+  <table>
+    <tr><th>Group</th><th>Examples in PlaywrightActions</th></tr>
+    <tr><td>Core UI</td><td>click, dblClick, fill, type, clear, select, hover, check/uncheck</td></tr>
+    <tr><td>Drag and drop</td><td>dragAndDrop, dragAndDropByMouse, dragByOffset</td></tr>
+    <tr><td>Frames</td><td>frame, nestedFrame, inFrame, clickInFrame, fillInFrame, getFrameByUrl/Name</td></tr>
+    <tr><td>Shadow DOM</td><td>inShadow, shadowLocator, deepShadowLocator, clickInShadow, fillInShadow</td></tr>
+    <tr><td>Files</td><td>upload, uploadPayload, clearUpload, download*, downloadAndSave</td></tr>
+    <tr><td>Scroll</td><td>scrollIntoView, scrollBy/To, scrollToTop/Bottom, scrollElement*, mouseWheel</td></tr>
+    <tr><td>JavaScript</td><td>evaluate, evaluateScript, evaluateOnLocator, evaluateHandle, dispatchDomEvent, setValueByJs</td></tr>
+    <tr><td>Windows</td><td>launchApplicationInNewWindow, clickAndSwitchToNewWindow*, switchToWindow*</td></tr>
   </table>
 
   <h2>8. LLM triage and model routing</h2>
@@ -230,8 +302,21 @@ flowchart TB
   <p>Node 24 LTS+, Playwright browsers, optional MySQL/Postgres. Dashboard on port 3000. LLM defaults to the hosted server <code>localaiserver.testingprofessor.net</code> (not a local Ollama process).</p>
   <h3>9.2 Docker Compose</h3>
   <p>Services: mysql, postgres, ollama (optional local), dashboard, tests (profile). Tests write reports to a bind-mounted volume. Hosted LLM can replace compose Ollama via <code>LLM_HOST</code>.</p>
-  <h3>9.3 Cloud</h3>
+  <h3>9.3 Cloud and CI</h3>
   <p>When <code>EXECUTION_ENV=browserstack</code>, the runner connects via Playwright CDP WebSocket using BrowserStack capabilities instead of launching a local browser.</p>
+  <p>GitHub Actions runs a browser matrix (Chromium, Firefox, WebKit) against <code>https://corebanking.testingprofessor.net/</code> with <code>LLM_ENABLED=false</code> and tags such as <code>@smoke and not @example</code>.</p>
+
+  <h3>9.4 CI secrets (required for authenticated runs)</h3>
+  <p>The workflow verifies credentials before tests and fails early if they are missing. Configure these as <strong>repository secrets</strong> (Settings → Secrets and variables → Actions) — do not commit them.</p>
+  <table>
+    <tr><th>Secret</th><th>Required</th><th>Purpose</th></tr>
+    <tr><td><code>APP_USERNAME</code></td><td>Yes</td><td>Core banking login email / username</td></tr>
+    <tr><td><code>APP_PASSWORD</code></td><td>Yes</td><td>Plain password, or <code>enc.v1...</code> ciphertext when encryption is used</td></tr>
+    <tr><td><code>APP_ENCRYPTION_KEY</code></td><td>Only if password is encrypted</td><td>Decrypts <code>APP_PASSWORD</code> at runtime</td></tr>
+    <tr><td><code>BROWSERSTACK_USERNAME</code> / <code>BROWSERSTACK_ACCESS_KEY</code></td><td>Optional</td><td>Only for the BrowserStack workflow job</td></tr>
+    <tr><td><code>LLM_API_KEY</code></td><td>Optional</td><td>Not used in default CI (<code>LLM_ENABLED=false</code>)</td></tr>
+  </table>
+  <p>Optional repository <strong>variable</strong>: <code>BASE_URL</code> (defaults to the core banking AUT above).</p>
 
   <h2>10. Data sharing</h2>
   <p>Cucumber workers do not share Node memory. SharedBuffer exposes three scopes:</p>
@@ -247,9 +332,9 @@ flowchart TB
     <tr><th>Channel</th><th>When</th><th>Audience</th></tr>
     <tr><td>Winston files/console</td><td>Every action/step</td><td>Debugging</td></tr>
     <tr><td>Allure</td><td>Each run</td><td>QA / CI artifacts</td></tr>
-    <tr><td>Extent activity HTML</td><td>End of run (and after triage)</td><td>Step + Playwright action log, screenshots, video, trace, AI note</td></tr>
-    <tr><td>Custom failures.html</td><td>Post-run / after triage</td><td>Root-cause review</td></tr>
-    <tr><td>Dashboard</td><td>Historical</td><td>Leads / trends / flaky tests / AI insights</td></tr>
+    <tr><td>Extent activity HTML</td><td>End of run (and after triage)</td><td>Step + Playwright action log, screenshots, video, trace, AI note (Testing Professor branded)</td></tr>
+    <tr><td>Custom failures.html</td><td>Post-run / after triage</td><td>Root-cause review (branded)</td></tr>
+    <tr><td>Dashboard</td><td>Historical</td><td>Leads / trends / flaky tests / AI insights (branded)</td></tr>
     <tr><td>AI insights</td><td>AfterAll when enabled, or dashboard / <code>npm run ai:triage</code></td><td>Triage acceleration</td></tr>
   </table>
 
@@ -257,9 +342,10 @@ flowchart TB
   <ul>
     <li>Isolation: new browser context per scenario.</li>
     <li>Parallel: Cucumber <code>--parallel</code> with file-locked global store; AfterAll triage runs on the primary worker only.</li>
-    <li>Resilience: DB and LLM are optional; JSON history and Extent still generate.</li>
+    <li>Resilience: DB, LLM, and self-heal are optional; JSON history and Extent still generate.</li>
     <li>Security: credentials and <code>LLM_API_KEY</code> only via environment / CI secrets, never committed.</li>
     <li>Extensibility: add a page class + business method + feature + thin step without changing core.</li>
+    <li>Observability: button clicks may pause (<code>CLICK_PAUSE_MS</code>) for headed runs; CI sets pauses to 0.</li>
   </ul>
 
   <h2>13. Constraints and assumptions</h2>
@@ -267,12 +353,25 @@ flowchart TB
     <li>TypeScript 7 on Node 24 LTS or later, executed with <code>tsx</code> (not <code>ts-node</code>).</li>
     <li>Playwright 1.62.1 library (Cucumber is the test runner; Playwright Test is not used as the runner).</li>
     <li>Core banking pages are implemented; <code>templates/ExamplePage</code> remains a scaffold for new pages.</li>
+    <li>Open shadow DOM is pierceable; closed shadow roots are not.</li>
+    <li>Self-heal is off by default; LLM heal requires <code>SELF_HEAL_USE_LLM</code> plus <code>LLM_ENABLED</code> and an API key.</li>
     <li>The local AI server requires a valid <code>LLM_API_KEY</code>. HTTPS to that host is not used; HTTP is.</li>
     <li>32B-class models are detected from Ollama catalog metadata or names such as <code>:32b</code>.</li>
   </ul>
 
-  <h2>14. Related documents</h2>
-  <p>See <a href="./lld.html">Low Level Design (LLD)</a> for module contracts, hook behavior, artifact flags, error catalog, database schema, LLM routing, and extension procedures.</p>
+  <h2>14. Stakeholder deliverables</h2>
+  <table>
+    <tr><th>Format</th><th>File</th><th>Use</th></tr>
+    <tr><td>HTML</td><td><code>docs/hld.html</code></td><td>Interactive design with diagrams</td></tr>
+    <tr><td>PDF</td><td><code>docs/hld.pdf</code></td><td>Print / archive</td></tr>
+    <tr><td>Word</td><td><code>docs/hld-stakeholder.docx</code></td><td>Email / review comments</td></tr>
+    <tr><td>PowerPoint</td><td><code>docs/hld-stakeholder.pptx</code></td><td>Live stakeholder presentation</td></tr>
+    <tr><td>LLD</td><td><code>docs/lld.html</code> / <code>docs/lld.pdf</code></td><td>Engineering detail</td></tr>
+  </table>
+  <p>Regenerate: <code>npm run docs:pdf</code> and <code>npm run docs:hld:stakeholder</code>.</p>
+
+  <h2>15. Related documents</h2>
+  <p>See <a href="./lld.html">Low Level Design (LLD)</a> for module contracts, hook behavior, artifact flags, action API groups, self-heal, error catalog, database schema, LLM routing, and extension procedures. Interactive summaries are also available as Cursor canvases (<code>hld-architecture</code>, <code>lld-modules</code>).</p>
 
   <script>mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
 </body>

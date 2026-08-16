@@ -34,9 +34,39 @@ Open reports — full command list is in [REPORTS.md](REPORTS.md):
 3. Add `features/<name>.feature` and `features/steps/<name>.steps.ts`.
 4. Use `this.actions` or the page object from Cucumber steps.
 
-Or drop a screen recording in `recordings/` and ask the Cursor agent to generate Playwright from the video. It creates one page object per new screen, reuses login/customer objects when those screens appear, and adds the feature plus steps. See [recordings/README.md](recordings/README.md).
+Or drop a screen recording in `recordings/recorded executions/` and ask the Cursor or Claude agent to generate Playwright from the video. It fetches files from that folder, creates one page object per new screen, reuses login/customer objects when those screens appear, and adds the feature plus steps. See [recordings/README.md](recordings/README.md).
 
 Details are in [docs/hld.html](docs/hld.html) and [docs/lld.html](docs/lld.html). Generate PDFs with `npm run docs:pdf`.
+
+## GitHub Actions CI
+
+Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+Default AUT is `https://corebanking.testingprofessor.net/` (override with repo variable `BASE_URL`). Smoke runs use `@smoke and not @example` against Chromium, Firefox, and WebKit.
+
+**Required repository secrets**
+
+| Secret | Purpose |
+| --- | --- |
+| `APP_USERNAME` | Core banking login email |
+| `APP_PASSWORD` | Plain password, or `enc.v1...` if you also set `APP_ENCRYPTION_KEY` |
+| `APP_ENCRYPTION_KEY` | Optional; only when `APP_PASSWORD` is encrypted |
+| `BROWSERSTACK_USERNAME` / `BROWSERSTACK_ACCESS_KEY` | Optional; BrowserStack job via workflow_dispatch |
+
+CI sets `LLM_ENABLED=false`. `OLLAMA_ENABLED` is the same switch (an alias), not a second flag. Headed pauses are disabled (`LOGIN_PAUSE_MS=0`, `CLICK_PAUSE_MS=0`).
+
+## Self-healing locators
+
+Disabled by default. When a click/fill/wait fails with an element/timeout error, the action layer can try alternatives:
+
+```bash
+# .env
+SELF_HEAL_ENABLED=true
+SELF_HEAL_USE_LLM=false          # set true to ask the LLM after heuristics (needs LLM_ENABLED + LLM_API_KEY)
+SELF_HEAL_TIMEOUT_MS=2500
+```
+
+Order: remembered heal cache → role/text/placeholder/label/css heuristics → optional LLM. Successful heals are stored under `reports/self-heal/healed-locators.json` and logged in Extent as `selfHeal` activities.
 
 ## Shared buffer (parallel / cross-browser)
 
@@ -86,7 +116,16 @@ npm run ai:health
 npm run ai:triage
 ```
 
-Set `LLM_ROUTE=false` and `LLM_MODEL=gemma4:latest` to always use Gemma. `OLLAMA_*` env names remain aliases.
+Set `LLM_ROUTE=false` and `LLM_MODEL=gemma4:latest` to always use Gemma. `OLLAMA_ENABLED` is the same flag as `LLM_ENABLED`; `OLLAMA_HOST`, `OLLAMA_MODEL`, and `OLLAMA_API_KEY` alias the matching `LLM_*` names.
+
+## Manager session reuse
+
+These are different steps on purpose:
+
+- `I sign in with valid credentials` — always types email and password in the UI (`login.feature`).
+- `I reuse the saved bank manager session` — loads Playwright `storageState` from `reports/.auth/bank-manager.json`. The first scenario in a run that hits this step signs in through the UI once and saves the file; later scenarios skip the login form.
+
+Customer Background uses the reuse step, then opens the bank manager portal.
 
 ## BrowserStack
 
@@ -116,7 +155,8 @@ npm run docker:test
 | `test:parallel` | 4 workers |
 | `test:smoke`, `test:tags` | Tag filters |
 | `codegen`, `codegen:url`, `codegen:mobile` | Playwright recorder |
-| `generate:frames` | Extract stills from a UI recording |
+| `generate:frames` | Extract stills from a UI recording in `recordings/recorded executions/` |
+| `generate:frames:list` | List videos in `recordings/recorded executions/` |
 | `allure:generate`, `allure:open` | Allure |
 | `report:custom`, `report:all` | Failure HTML + AI |
 | `dashboard:start`, `db:migrate` | Ops |

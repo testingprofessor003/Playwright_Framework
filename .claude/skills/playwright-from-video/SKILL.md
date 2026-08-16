@@ -11,13 +11,23 @@ Read [conventions.md](conventions.md) before writing files. Copy shapes from [te
 
 ## Inputs
 
+Source videos live in `recordings/recorded executions/` (not the recordings root, and not `recordings/test-runs/`).
+
 Accept any of:
 
 - An attached/dropped video (`.mp4`, `.webm`, `.mov`, `.mkv`)
-- A path under `recordings/`
+- A path under `recordings/recorded executions/`
+- A filename only (resolved from that folder)
 - Screenshots plus a short description of the flow
 
-If no video path is given, look in `recordings/` (ignore `frames/` and `*.json`). Ask only if nothing is found.
+If no video path is given:
+
+1. Run `npm run generate:frames:list`
+2. Read every video in `recordings/recorded executions/` (ignore `frames/`, `*.json`, and README)
+3. If several videos exist, process each one (or ask which to use if the user named one)
+4. Ask only if the folder is empty
+
+Do not fetch from `recordings/test-runs/` — those are Playwright scenario videos from test execution.
 
 ## Workflow
 
@@ -27,7 +37,7 @@ Copy this checklist and complete it in order:
 Task Progress:
 - [ ] 1. Inspect video / extract frames
 - [ ] 2. Map screens vs existing page objects
-- [ ] 3. Write recordings/<slug>/screens.json
+- [ ] 3. Write recordings/recorded executions/<slug>/screens.json
 - [ ] 4. Create or extend page objects
 - [ ] 5. Add testdata factory if the flow fills forms
 - [ ] 6. Write feature + step definitions
@@ -41,8 +51,10 @@ Task Progress:
 2. Extract stills so each distinct screen is a PNG:
 
 ```bash
-npx tsx scripts/extract-video-frames.ts --video <path-to-video>
+npx tsx scripts/extract-video-frames.ts --video <filename-or-path>
 ```
+
+Bare filenames are resolved from `recordings/recorded executions/`. List available files with `npm run generate:frames:list`.
 
 3. Read the extracted frames in time order. Name each unique screen from visible headings, tabs, buttons, and URL chrome (for example `Login`, `AddCustomer`, `Customers`).
 
@@ -65,15 +77,16 @@ New screens → new `src/pages/<Name>Page.ts`. Changed screens → extend the ex
 Canonical launch/login steps (reuse, do not redefine):
 
 - `Given I launch the core banking application`
-- `When/And I sign in with valid credentials`
+- `Given/And I reuse the saved bank manager session` — authenticated manager journeys (skips the login form after the first save)
+- `When/And I sign in with valid credentials` — only when the scenario is testing UI login
 
 ### 3. Screen inventory
 
-Write `recordings/<slug>/screens.json` before generating code. Schema:
+Write `recordings/recorded executions/<slug>/screens.json` before generating code. Schema:
 
 ```json
 {
-  "video": "recordings/example.mp4",
+  "video": "recordings/recorded executions/example.mp4",
   "featureTag": "transfer",
   "featureFile": "features/transfer.feature",
   "reusedPages": ["LoginPage"],
@@ -85,7 +98,7 @@ Write `recordings/<slug>/screens.json` before generating code. Schema:
       "pageFile": "src/pages/TransferPage.ts",
       "existing": false,
       "elements": [
-        { "name": "Amount", "role": "textbox", "accessibleName": "Amount", "action": "fill" }
+        { "name": "Amount", "role": "textbox", "accessibleName": "Amount", "action": "fill", "xpath": "//input[@placeholder='Amount' or @aria-label='Amount' or @name='amount']" }
       ],
       "actions": ["openTransferTab", "enterAmount", "submitTransfer"],
       "assertions": ["assertTransferCompleted"]
@@ -123,7 +136,8 @@ Fix undefined/ambiguous steps before stopping. Do not run a full headed suite un
 ## Hard rules
 
 - Locators live only in page objects. Steps construct the page with `(this.page, this.logger, this.context)`.
-- Prefer `getByRole` → `getByLabel` → `getByPlaceholder` → `getByText` → `getByTestId`. CSS/XPath only as last resort.
+- Prefer `getByRole` → `getByLabel` → `getByPlaceholder` → `getByText` → `getByTestId`. Always attach an XPath fallback with `this.byPreferredOrXPath(preferred, xpath)`. If those locators cannot be determined from the recording, use `this.xpath('//...')` only — never CSS as the last resort.
+- Paths and commands must work on Windows, macOS, and Linux: repo-relative POSIX paths, `node:path`, `npm`/`npx` only.
 - Drive the browser through `this.actions`, `this.waits`, `this.asserts` (or the page object's inherited helpers). Never call `page.click` / `page.fill` in new code.
 - After any method that may open a window or change page, call `this.setPage(next)` in the page object and `this.setActivePage(...)` in the step.
 - Credentials come from `requireAppCredentials()` / `.env`. Never hardcode passwords.

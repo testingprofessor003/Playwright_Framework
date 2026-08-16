@@ -2,8 +2,8 @@ node_modules/
 dist/
 .env
 logs/
-reports/
-!reports/.gitkeep
+/reports/
+!/reports/.gitkeep
 .shared-buffer.json
 *.log
 .DS_Store
@@ -17,3 +17,7 @@ recordings/**/*.mp4
 recordings/**/*.webm
 recordings/**/*.mov
 recordings/**/*.mkv
+!recordings/test-runs/.gitkeep
+!recordings/recorded executions/.gitkeep
+!recordings/.gitkeep
+!recordings/README.md

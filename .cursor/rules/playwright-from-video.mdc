@@ -1,9 +1,9 @@
 ---
 description: Generate Playwright BDD page objects, features, and steps from recorded UI videos. Apply when the user provides a screen recording, asks to generate Playwright from a video, or wants objects created for screens in a recording.
-globs: recordings/**/*,**/*.{mp4,webm,mov,mkv}
+globs: recordings/**/*,recordings/recorded executions/**/*,**/*.{mp4,webm,mov,mkv}
 alwaysApply: false
 ---
 
-When generating automation from a recording, follow `.cursor/skills/playwright-from-video/SKILL.md`.
+When generating automation from a recording, fetch videos from `recordings/recorded executions/` and follow `.cursor/skills/playwright-from-video/SKILL.md`.
 
-Create one page object per distinct screen, reuse `LoginPage` and existing customer pages when those screens appear, keep locators out of step files, and dry-run Cucumber before finishing.
+Create one page object per distinct screen, reuse `LoginPage` and existing customer pages when those screens appear, keep locators out of step files, attach an XPath fallback on every control, use repo-relative paths that work on Windows/macOS/Linux, and dry-run Cucumber before finishing.

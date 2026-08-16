@@ -21,6 +21,14 @@ function llmApiMode(value: string | undefined): LlmApiMode {
   return 'auto';
 }
 
+function firstEnv(...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value !== undefined && value.trim() !== '') return value;
+  }
+  return undefined;
+}
+
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === '') return fallback;
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
@@ -30,6 +38,14 @@ function num(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
+
+/** LLM_ENABLED and OLLAMA_ENABLED are the same on/off switch. */
+const llmEnabled = bool(firstEnv('LLM_ENABLED', 'OLLAMA_ENABLED'), false);
+const llmHost = hostUrl(
+  firstEnv('LLM_HOST', 'OLLAMA_HOST'),
+  'http://localaiserver.testingprofessor.net',
+);
+const llmModel = firstEnv('LLM_MODEL', 'OLLAMA_MODEL') || 'auto';
 
 export const env = {
   baseUrl: process.env.BASE_URL || 'https://corebanking.testingprofessor.net/',
@@ -43,6 +59,11 @@ export const env = {
   slowMo: num(process.env.SLOW_MO, 0),
   parallel: num(process.env.PARALLEL, 1),
   retry: num(process.env.RETRY, 0),
+  /** When true, failed locators try cache → heuristics → optional LLM alternatives. */
+  selfHealEnabled: bool(firstEnv('SELF_HEAL_ENABLED', 'SELF_HEAL'), false),
+  /** Use LLM to suggest a locator after heuristics fail (requires LLM_ENABLED + LLM_API_KEY). */
+  selfHealUseLlm: bool(process.env.SELF_HEAL_USE_LLM, false),
+  selfHealTimeoutMs: num(process.env.SELF_HEAL_TIMEOUT_MS, 2500),
   screenshot: parseArtifactMode(process.env.SCREENSHOT, 'retain-on-failure'),
   stepScreenshot: parseArtifactMode(process.env.STEP_SCREENSHOT, 'off'),
   screenshotFullPage: bool(process.env.SCREENSHOT_FULL_PAGE, true),
@@ -61,26 +82,22 @@ export const env = {
   dbUser: process.env.DB_USER || 'root',
   dbPassword: process.env.DB_PASSWORD || 'password',
   dbName: process.env.DB_NAME || 'playwright_framework',
-  llmEnabled: bool(process.env.LLM_ENABLED ?? process.env.OLLAMA_ENABLED, false),
-  llmHost: hostUrl(
-    process.env.LLM_HOST || process.env.OLLAMA_HOST,
-    'http://localaiserver.testingprofessor.net',
-  ),
-  llmModel: process.env.LLM_MODEL || process.env.OLLAMA_MODEL || 'auto',
+  llmEnabled,
+  llmHost,
+  llmModel,
   llmRouterModel: process.env.LLM_ROUTER_MODEL || 'llama3',
   llmComplexModel: process.env.LLM_COMPLEX_MODEL || 'gemma4:latest',
   llmPreferBillion: num(process.env.LLM_PREFER_BILLION, 32),
   llmRoute: bool(process.env.LLM_ROUTE, true),
-  llmApiKey: process.env.LLM_API_KEY || process.env.OLLAMA_API_KEY || process.env.OPENAI_API_KEY || '',
+  llmApiKey: firstEnv('LLM_API_KEY', 'OLLAMA_API_KEY', 'OPENAI_API_KEY') || '',
   llmApi: llmApiMode(process.env.LLM_API || 'ollama'),
   llmTimeoutMs: num(process.env.LLM_TIMEOUT_MS, 90000),
-  /** @deprecated Use llmEnabled. Kept for older docker/compose env files. */
-  ollamaEnabled: bool(process.env.LLM_ENABLED ?? process.env.OLLAMA_ENABLED, false),
-  ollamaHost: hostUrl(
-    process.env.LLM_HOST || process.env.OLLAMA_HOST,
-    'http://localaiserver.testingprofessor.net',
-  ),
-  ollamaModel: process.env.LLM_MODEL || process.env.OLLAMA_MODEL || 'auto',
+  /** Same value as llmEnabled. OLLAMA_ENABLED is an alias of LLM_ENABLED. */
+  ollamaEnabled: llmEnabled,
+  /** Same value as llmHost. OLLAMA_HOST is an alias of LLM_HOST. */
+  ollamaHost: llmHost,
+  /** Same value as llmModel. OLLAMA_MODEL is an alias of LLM_MODEL. */
+  ollamaModel: llmModel,
   browserstackUsername: process.env.BROWSERSTACK_USERNAME || '',
   browserstackAccessKey: process.env.BROWSERSTACK_ACCESS_KEY || '',
   browserstackOs: process.env.BROWSERSTACK_OS || 'OS X',

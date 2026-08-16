@@ -26,7 +26,29 @@ aside {
   display: flex;
   flex-direction: column;
 }
-aside h1 { margin: 0; letter-spacing: 0.08em; }
+aside h1 { margin: 0; letter-spacing: 0.08em; font-size: 22px; }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.brand-logo {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: #facc15;
+  flex-shrink: 0;
+}
+.brand-eyebrow {
+  margin: 0 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #facc15;
+  font-weight: 600;
+}
 nav { display: flex; flex-direction: column; gap: 8px; margin-top: 28px; }
 .nav, .primary {
   background: transparent;

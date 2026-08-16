@@ -1,4 +1,4 @@
-import { BrowserContext, Page } from 'playwright';
+import { BrowserContext, Locator, Page } from 'playwright';
 import { PlaywrightActions } from '../utils/PlaywrightActions';
 import { Assertions } from '../utils/Assertions';
 import { WaitConditions } from '../utils/WaitConditions';
@@ -31,6 +31,20 @@ export class BasePage {
   setPage(page: Page): void {
     this.page = page;
     this.actions.setPage(page);
+  }
+
+  /** XPath locator. Pass `//button[@type='submit']` or `xpath=//button[@type='submit']`. */
+  protected xpath(expression: string): Locator {
+    const expr = expression.replace(/^xpath=/i, '');
+    return this.page.locator(`xpath=${expr}`);
+  }
+
+  /**
+   * Prefer an accessible locator; fall back to XPath when that node is missing.
+   * Use this on every generated control so the page still works if the role/name changes.
+   */
+  protected byPreferredOrXPath(preferred: Locator, xpath: string): Locator {
+    return preferred.or(this.xpath(xpath)).first();
   }
 
   async goto(url: string = env.baseUrl): Promise<void> {

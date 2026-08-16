@@ -10,7 +10,10 @@ pipeline {
   environment {
     HEADLESS = 'true'
     BROWSER = "${params.BROWSER}"
-    BASE_URL = "${env.APP_BASE_URL ?: 'https://example.com'}"
+    BASE_URL = "${env.APP_BASE_URL ?: 'https://corebanking.testingprofessor.net/'}"
+    LOGIN_PAUSE_MS = '0'
+    CLICK_PAUSE_MS = '0'
+    LLM_ENABLED = 'false'
   }
 
   stages {

@@ -58,6 +58,7 @@
     "codegen:mobile": "playwright codegen --device \"iPhone 14\"",
     "codegen:url": "node scripts/codegen.js",
     "generate:frames": "tsx scripts/extract-video-frames.ts",
+    "generate:frames:list": "tsx scripts/extract-video-frames.ts --list",
     "allure:generate": "allure generate reports/allure-results --clean -o reports/allure-report",
     "allure:open": "allure open reports/allure-report",
     "allure:serve": "allure serve reports/allure-results",
@@ -77,7 +78,8 @@
     "docs:hld": "node -e \"console.log('Open docs/hld.html in a browser')\"",
     "docs:lld": "node -e \"console.log('Open docs/lld.html in a browser')\"",
     "docs:pdf": "tsx scripts/generate-pdf.ts",
-    "docs:generate": "npm run docs:pdf",
+    "docs:hld:stakeholder": "tsx scripts/generate-hld-stakeholder.ts",
+    "docs:generate": "npm run docs:pdf && npm run docs:hld:stakeholder",
     "secret:encrypt": "tsx scripts/encrypt-secret.ts",
     "secret:migrate": "tsx scripts/encrypt-secret.ts --migrate-env",
     "install:browsers": "playwright install",
@@ -113,6 +115,8 @@
     "@types/pg": "^8.11.11",
     "@types/proper-lockfile": "^4.1.4",
     "allure-commandline": "^2.32.0",
+    "docx": "^9.7.1",
+    "pptxgenjs": "^4.0.1",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }

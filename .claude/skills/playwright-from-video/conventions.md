@@ -11,8 +11,8 @@ Source of truth: existing files under `src/pages/`, `features/`, and `features/s
 | Testdata | `src/testdata/<name>Factory.ts` |
 | Feature | `features/<slug>.feature` |
 | Steps | `features/steps/<slug>.steps.ts` |
-| Screen inventory | `recordings/<slug>/screens.json` |
-| Extracted frames | `recordings/<slug>/frames/` |
+| Screen inventory | `recordings/recorded executions/<slug>/screens.json` |
+| Extracted frames | `recordings/recorded executions/<slug>/frames/` |
 
 Cucumber already loads `features/**/*.feature` and `features/steps/**/*.ts` via `cucumber.js`. New files are picked up automatically.
 
@@ -21,7 +21,10 @@ Cucumber already loads `features/**/*.feature` and `features/steps/**/*.ts` via 
 ```ts
 export class TransferPage extends BasePage {
   private get amountInput() {
-    return this.page.getByRole('textbox', { name: 'Amount' });
+    return this.byPreferredOrXPath(
+      this.page.getByRole('textbox', { name: 'Amount' }),
+      '//input[@placeholder="Amount" or @aria-label="Amount" or @name="amount"]',
+    );
   }
 
   constructor(page: Page, logger: FrameworkLogger, context?: BrowserContext) {
@@ -33,6 +36,7 @@ export class TransferPage extends BasePage {
 - Class name: `<Screen>Page`, file name matches.
 - Locators: `private get` (not constructor-assigned `locator()` fields) so they stay bound after `setPage`.
 - Constructor always `(page, logger, context?)`.
+- Every control uses `this.byPreferredOrXPath(preferred, xpath)`. If no role/label/placeholder/text/testid can be determined from the recording, use `this.xpath('//...')` only.
 - Methods are user intents: `openTransferTab()`, `enterAmount(value)`, `submitTransfer()`, `assertTransferCompleted()`.
 - Wait, then act: `await this.waits.visible(locator, 'Amount')` then `await this.actions.fill(...)`.
 - Clicks that should not pause for observation: `{ observe: false }` (search boxes, intermediate fields).
@@ -82,7 +86,7 @@ Feature: Transfer funds
 
   Background:
     Given I launch the core banking application
-    And I sign in with valid credentials
+    And I reuse the saved bank manager session
 
   @smoke @positive
   Scenario: Transfer a random amount
@@ -92,7 +96,9 @@ Feature: Transfer funds
 ```
 
 - One Feature per recording (or per business capability if the video covers several).
-- Background = setup seen at the start of the video (usually launch + login).
+- Background = setup seen at the start of the video (usually launch + session).
+- Use `I sign in with valid credentials` only when the scenario is testing the login UI itself.
+- Use `I reuse the saved bank manager session` for journeys that need an already-authenticated manager (distinct from UI login).
 - Scenario names describe outcome, not implementation.
 - Scenario Outline + Examples for data-driven paths visible in the recording.
 - Include at least one `@smoke @positive` happy path. Add `@negative` only when the video (or user) shows validation/error.
@@ -111,9 +117,19 @@ Feature: Transfer funds
 4. `getByText` / `getByAltText`
 5. `getByTestId`
 6. Filtered locator (`locator('div').filter({ hasText })`) as in `OpenAccountPage`
-7. Raw CSS
+7. **XPath fallback** — always. Wrap the preferred locator with `this.byPreferredOrXPath(preferred, xpath)`. If none of 1–6 can be determined, use `this.xpath('//...')` alone. Do not use CSS as the last resort.
+
+Store the XPath on each element in `screens.json` (`xpath`). Prefer stable attributes: `@id`, `@name`, `@aria-label`, `@placeholder`, `@data-testid`, `@type`, visible text via `normalize-space()`.
 
 Use `exact: true` when the accessible name collides (see `LoginPage` Sign in).
+
+## Operating systems
+
+This skill and its scripts run on Windows, macOS, and Linux.
+
+- Use repo-relative POSIX paths in generated files and docs (`recordings/recorded executions/my-flow.mp4`). Never hardcode `C:\`, `/Users/...`, or `\\`.
+- Node scripts must use `node:path` (`join`, `resolve`). `ffmpeg` is resolved via `where` (Windows) or `which` (macOS/Linux).
+- Commands the agent runs are `npm` / `npx` only — no PowerShell-only or bash-only scripts.
 
 ## Do not
 

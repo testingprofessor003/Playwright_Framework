@@ -12,15 +12,24 @@ import { TransferData } from '../testdata/transferFactory';
 
 export class TransferPage extends BasePage {
   private get transferTab() {
-    return this.page.getByRole('tab', { name: 'Transfer' });
+    return this.byPreferredOrXPath(
+      this.page.getByRole('tab', { name: 'Transfer' }),
+      '//*[@role="tab" and (normalize-space()="Transfer" or @aria-label="Transfer")]',
+    );
   }
 
   private get amountInput() {
-    return this.page.getByRole('textbox', { name: 'Amount' });
+    return this.byPreferredOrXPath(
+      this.page.getByRole('textbox', { name: 'Amount' }),
+      '//input[@placeholder="Amount" or @aria-label="Amount" or @name="amount"]',
+    );
   }
 
   private get submitButton() {
-    return this.page.getByRole('button', { name: 'Transfer' });
+    return this.byPreferredOrXPath(
+      this.page.getByRole('button', { name: 'Transfer' }),
+      '//button[normalize-space()="Transfer" or @aria-label="Transfer"]',
+    );
   }
 
   constructor(page: Page, logger: FrameworkLogger, context?: BrowserContext) {
@@ -45,7 +54,10 @@ export class TransferPage extends BasePage {
   }
 
   async assertTransferCompleted(): Promise<void> {
-    const confirmation = this.page.getByText(/transfer (completed|successful)|success/i).first();
+    const confirmation = this.byPreferredOrXPath(
+      this.page.getByText(/transfer (completed|successful)|success/i).first(),
+      '//*[contains(normalize-space(), "success") or contains(normalize-space(), "completed")]',
+    );
     await this.asserts.visible(confirmation, 'Transfer confirmation');
   }
 }
@@ -88,7 +100,7 @@ Feature: Transfer funds
 
   Background:
     Given I launch the core banking application
-    And I sign in with valid credentials
+    And I reuse the saved bank manager session
 
   @smoke @positive
   Scenario: Transfer a random amount

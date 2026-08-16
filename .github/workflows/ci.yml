@@ -7,13 +7,29 @@ on:
   workflow_dispatch:
     inputs:
       tags:
-        description: 'Cucumber tags (e.g. @smoke)'
+        description: 'Cucumber tags (e.g. @smoke and not @example)'
         required: false
-        default: '@smoke'
+        default: '@smoke and not @example'
       browserstack:
         description: 'Run on BrowserStack'
         type: boolean
         default: false
+
+env:
+  # Real AUT — override with repo variable BASE_URL if needed
+  BASE_URL: ${{ vars.BASE_URL || 'https://corebanking.testingprofessor.net/' }}
+  HEADLESS: 'true'
+  LOGIN_PAUSE_MS: '0'
+  CLICK_PAUSE_MS: '0'
+  SLOW_MO: '0'
+  KEEP_BROWSER_OPEN: 'false'
+  DB_ENABLED: 'false'
+  LLM_ENABLED: 'false'
+  SCREENSHOT: retain-on-failure
+  STEP_SCREENSHOT: 'off'
+  VIDEO: retain-on-failure
+  TRACE: retain-on-failure
+  CUCUMBER_TIMEOUT: '120000'
 
 jobs:
   test:
@@ -24,27 +40,44 @@ jobs:
         browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+
       - name: Install dependencies
         run: npm ci
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps ${{ matrix.browser }}
-      - name: Run Cucumber tests
+
+      - name: Verify app credentials
+        env:
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: |
+          if [ -z "$APP_USERNAME" ] || [ -z "$APP_PASSWORD" ]; then
+            echo "::error::Set repository secrets APP_USERNAME and APP_PASSWORD so CI can sign in to core banking."
+            exit 1
+          fi
+
+      - name: Run core-banking smoke tests
         env:
           BROWSER: ${{ matrix.browser }}
-          HEADLESS: 'true'
-          BASE_URL: ${{ vars.BASE_URL || 'https://example.com' }}
-          DB_ENABLED: 'false'
-          OLLAMA_ENABLED: 'false'
-        run: npx cucumber-js --tags "${{ github.event.inputs.tags || '@smoke' }}"
+          BROWSER_CHANNEL: ''
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
+        run: npx cucumber-js --tags "${{ github.event.inputs.tags || '@smoke and not @example' }}"
+
       - name: Generate reports
         if: always()
         run: |
           npm run allure:generate || true
           npm run report:custom || true
+          npm run report:extent || true
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -53,21 +86,55 @@ jobs:
           path: |
             reports/
             logs/
+            recordings/test-runs/
+          if-no-files-found: ignore
 
   browserstack:
     if: ${{ github.event.inputs.browserstack == true }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+
       - run: npm ci
+
+      - name: Verify BrowserStack and app credentials
+        env:
+          BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+          BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: |
+          if [ -z "$BROWSERSTACK_USERNAME" ] || [ -z "$BROWSERSTACK_ACCESS_KEY" ]; then
+            echo "::error::Set secrets BROWSERSTACK_USERNAME and BROWSERSTACK_ACCESS_KEY."
+            exit 1
+          fi
+          if [ -z "$APP_USERNAME" ] || [ -z "$APP_PASSWORD" ]; then
+            echo "::error::Set secrets APP_USERNAME and APP_PASSWORD."
+            exit 1
+          fi
+
       - name: Run on BrowserStack
         env:
           EXECUTION_ENV: browserstack
           BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
           BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
-          BASE_URL: ${{ vars.BASE_URL || 'https://example.com' }}
-        run: npm run test:browserstack
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          APP_ENCRYPTION_KEY: ${{ secrets.APP_ENCRYPTION_KEY }}
+        run: npx cucumber-js --tags "${{ github.event.inputs.tags || '@smoke and not @example' }}"
+
+      - name: Upload BrowserStack artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-browserstack
+          path: |
+            reports/
+            logs/
+            recordings/test-runs/
+          if-no-files-found: ignore

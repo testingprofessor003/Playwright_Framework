@@ -1,9 +1,23 @@
-import { BrowserContext, Locator, Page, FrameLocator, Download, Dialog } from 'playwright';
+import fs from 'fs';
+import path from 'path';
+import {
+  BrowserContext,
+  Dialog,
+  Download,
+  Frame,
+  FrameLocator,
+  Locator,
+  Page,
+} from 'playwright';
 import { FrameworkLogger } from '../logger/logger';
 import { mapPlaywrightError } from '../errors/mapPlaywrightError';
-import { ConfigurationError, ElementNotFoundError } from '../errors/errors';
+import { ConfigurationError, ElementNotFoundError, FrameworkError } from '../errors/errors';
 import { Assertions } from './Assertions';
 import { WaitConditions, sleep } from './WaitConditions';
+import { resolveHealedLocator } from './SelfHeal';
+import { env } from '../config/env';
+import { DOWNLOADS_DIR } from '../config/paths';
+import { ensureDir, sanitizeFileName } from './files';
 import { getActivityReporter, withSuppressedWinston } from '../reports/extent/ActivityReporter';
 
 export type SelectValue =
@@ -16,6 +30,19 @@ export type SelectValue =
 export interface SelectedOption {
   value: string;
   label: string;
+}
+
+/** In-memory file for `setInputFiles` (no disk path required). */
+export interface UploadFilePayload {
+  name: string;
+  mimeType: string;
+  buffer: Buffer;
+}
+
+export interface SavedDownload {
+  download: Download;
+  suggestedFilename: string;
+  savedPath: string;
 }
 
 export class PlaywrightActions {
@@ -84,6 +111,37 @@ export class PlaywrightActions {
     });
   }
 
+  private isHealableFailure(error: unknown): boolean {
+    if (!(error instanceof FrameworkError)) return false;
+    return error.category === 'ELEMENT' || error.category === 'TIMEOUT';
+  }
+
+  /** Run a locator action; when SELF_HEAL_ENABLED, retry with a healed locator on element/timeout failures. */
+  private async runWithHeal<T>(
+    action: string,
+    name: string,
+    locator: Locator,
+    fn: (active: Locator) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await this.run(action, name, () => fn(locator));
+    } catch (error) {
+      if (!env.selfHealEnabled || !this.isHealableFailure(error)) {
+        throw error;
+      }
+
+      const healed = await resolveHealedLocator(this.page, name, action, error, this.logger);
+      if (!healed) {
+        throw error;
+      }
+
+      this.logger.info(
+        `Self-heal retrying ${action} on "${name}" via ${healed.strategy}${healed.fromCache ? ' (cache)' : ''}: ${healed.description}`,
+      );
+      return this.run(`${action}:healed`, `${name} [${healed.strategy}]`, () => fn(healed.locator));
+    }
+  }
+
   async goto(url: string, waitUntil: 'load' | 'domcontentloaded' | 'networkidle' = 'domcontentloaded'): Promise<void> {
     await this.run('goto', url, async () => {
       this.logger.info(`Navigate to ${url}`);
@@ -92,54 +150,136 @@ export class PlaywrightActions {
   }
 
   async click(locator: Locator, name: string, options?: { observe?: boolean }): Promise<void> {
-    await this.run('click', name, async () => {
+    await this.runWithHeal('click', name, locator, async (active) => {
       this.logger.info(`Click: ${name}`);
-      await locator.click();
+      await active.click();
     });
     await this.observeAfterClick(name, options?.observe);
   }
 
-  async dblClick(locator: Locator, name: string, options?: { observe?: boolean }): Promise<void> {
-    await this.run('dblclick', name, async () => {
+  async dblClick(
+    locator: Locator,
+    name: string,
+    options?: { observe?: boolean; position?: { x: number; y: number }; force?: boolean; delay?: number },
+  ): Promise<void> {
+    await this.runWithHeal('dblclick', name, locator, async (active) => {
       this.logger.info(`Double click: ${name}`);
-      await locator.dblclick();
+      await active.dblclick({
+        position: options?.position,
+        force: options?.force,
+        delay: options?.delay,
+      });
     });
     await this.observeAfterClick(name, options?.observe);
+  }
+
+  /**
+   * Drag source onto target (HTML5 drag-and-drop or mouse drag depending on the page).
+   * Prefer this for sortable lists, kanban cards, and file drop zones that accept element drops.
+   */
+  async dragAndDrop(
+    source: Locator,
+    sourceName: string,
+    target: Locator,
+    targetName: string,
+    options?: { force?: boolean; timeout?: number },
+  ): Promise<void> {
+    await this.run('dragAndDrop', `${sourceName} → ${targetName}`, async () => {
+      this.logger.info(`Drag and drop: ${sourceName} → ${targetName}`);
+      await source.dragTo(target, { force: options?.force, timeout: options?.timeout });
+    });
+  }
+
+  /** Drag an element by pixel offsets from its center (useful when there is no drop-target locator). */
+  async dragByOffset(
+    locator: Locator,
+    name: string,
+    offsetX: number,
+    offsetY: number,
+    options?: { steps?: number },
+  ): Promise<void> {
+    await this.runWithHeal('dragByOffset', name, locator, async (active) => {
+      const box = await active.boundingBox();
+      if (!box) {
+        throw new ElementNotFoundError(`Cannot drag "${name}" — element has no bounding box`, {
+          action: 'dragByOffset',
+          locator: name,
+        });
+      }
+      const startX = box.x + box.width / 2;
+      const startY = box.y + box.height / 2;
+      const steps = options?.steps ?? 12;
+      this.logger.info(`Drag ${name} by offset (${offsetX}, ${offsetY})`);
+      await this.page.mouse.move(startX, startY);
+      await this.page.mouse.down();
+      await this.page.mouse.move(startX + offsetX, startY + offsetY, { steps });
+      await this.page.mouse.up();
+    });
+  }
+
+  /** Mouse-based drag from source center to target center (fallback when `dragTo` is unreliable). */
+  async dragAndDropByMouse(
+    source: Locator,
+    sourceName: string,
+    target: Locator,
+    targetName: string,
+    options?: { steps?: number },
+  ): Promise<void> {
+    await this.run('dragAndDropByMouse', `${sourceName} → ${targetName}`, async () => {
+      const sourceBox = await source.boundingBox();
+      const targetBox = await target.boundingBox();
+      if (!sourceBox || !targetBox) {
+        throw new ElementNotFoundError(
+          `Cannot mouse-drag "${sourceName}" → "${targetName}" — missing bounding box`,
+          { action: 'dragAndDropByMouse', locator: `${sourceName} → ${targetName}` },
+        );
+      }
+      const steps = options?.steps ?? 16;
+      const fromX = sourceBox.x + sourceBox.width / 2;
+      const fromY = sourceBox.y + sourceBox.height / 2;
+      const toX = targetBox.x + targetBox.width / 2;
+      const toY = targetBox.y + targetBox.height / 2;
+      this.logger.info(`Mouse drag and drop: ${sourceName} → ${targetName}`);
+      await this.page.mouse.move(fromX, fromY);
+      await this.page.mouse.down();
+      await this.page.mouse.move(toX, toY, { steps });
+      await this.page.mouse.up();
+    });
   }
 
   async fill(locator: Locator, name: string, value: string): Promise<void> {
-    await this.run('fill', name, async () => {
+    await this.runWithHeal('fill', name, locator, async (active) => {
       this.logger.info(`Fill: ${name}${name.toLowerCase().includes('password') ? ' [encrypted secret decrypted in memory]' : ''}`);
-      await locator.fill(value);
+      await active.fill(value);
     });
   }
 
   async type(locator: Locator, name: string, value: string, delay = 50): Promise<void> {
-    await this.run('type', name, async () => {
+    await this.runWithHeal('type', name, locator, async (active) => {
       this.logger.info(`Type: ${name}`);
-      await locator.pressSequentially(value, { delay });
+      await active.pressSequentially(value, { delay });
     });
   }
 
   async clear(locator: Locator, name: string): Promise<void> {
-    await this.run('clear', name, async () => {
+    await this.runWithHeal('clear', name, locator, async (active) => {
       this.logger.info(`Clear: ${name}`);
-      await locator.clear();
+      await active.clear();
     });
   }
 
   async select(locator: Locator, name: string, value?: SelectValue): Promise<SelectedOption> {
-    return this.run('select', name, async () => {
+    return this.runWithHeal('select', name, locator, async (active) => {
       if (this.isBlankSelectValue(value)) {
-        const picked = await this.pickRandomOption(locator, name);
+        const picked = await this.pickRandomOption(active, name);
         this.logger.info(`Select: ${name} was blank — picked random option "${picked.label}" (${picked.value})`);
-        await locator.selectOption({ value: picked.value });
+        await active.selectOption({ value: picked.value });
         return picked;
       }
 
       this.logger.info(`Select: ${name} = ${JSON.stringify(value)}`);
-      await locator.selectOption(value as Exclude<SelectValue, null | undefined>);
-      return this.readSelectedOption(locator, value);
+      await active.selectOption(value as Exclude<SelectValue, null | undefined>);
+      return this.readSelectedOption(active, value);
     });
   }
 
@@ -148,10 +288,10 @@ export class PlaywrightActions {
     name: string,
     options?: { exclude?: Array<string | RegExp> },
   ): Promise<SelectedOption> {
-    return this.run('selectRandom', name, async () => {
-      const picked = await this.pickRandomOption(locator, name, options?.exclude);
+    return this.runWithHeal('selectRandom', name, locator, async (active) => {
+      const picked = await this.pickRandomOption(active, name, options?.exclude);
       this.logger.info(`Select: ${name} picked random option "${picked.label}" (${picked.value})`);
-      await locator.selectOption({ value: picked.value });
+      await active.selectOption({ value: picked.value });
       return picked;
     });
   }
@@ -230,46 +370,259 @@ export class PlaywrightActions {
   }
 
   async hover(locator: Locator, name: string): Promise<void> {
-    await this.run('hover', name, async () => {
+    await this.runWithHeal('hover', name, locator, async (active) => {
       this.logger.info(`Hover: ${name}`);
-      await locator.hover();
+      await active.hover();
     });
   }
 
   async check(locator: Locator, name: string, options?: { observe?: boolean }): Promise<void> {
-    await this.run('check', name, async () => {
+    await this.runWithHeal('check', name, locator, async (active) => {
       this.logger.info(`Check: ${name}`);
-      await locator.check();
+      await active.check();
     });
     await this.observeAfterClick(name, options?.observe);
   }
 
   async uncheck(locator: Locator, name: string, options?: { observe?: boolean }): Promise<void> {
-    await this.run('uncheck', name, async () => {
+    await this.runWithHeal('uncheck', name, locator, async (active) => {
       this.logger.info(`Uncheck: ${name}`);
-      await locator.uncheck();
+      await active.uncheck();
     });
     await this.observeAfterClick(name, options?.observe);
   }
 
+  // --- Uploads ------------------------------------------------------------------
+
+  /** Set file(s) on an `<input type="file">` (or equivalent). Paths must exist on disk. */
   async upload(locator: Locator, name: string, filePath: string | string[]): Promise<void> {
-    await this.run('upload', name, async () => {
-      this.logger.info(`Upload: ${name}`);
-      await locator.setInputFiles(filePath);
+    await this.runWithHeal('upload', name, locator, async (active) => {
+      const paths = Array.isArray(filePath) ? filePath : [filePath];
+      for (const file of paths) {
+        if (!fs.existsSync(file)) {
+          throw new ConfigurationError(`Upload file not found: ${file}`, {
+            action: 'upload',
+            locator: name,
+          });
+        }
+      }
+      this.logger.info(`Upload: ${name} ← ${paths.join(', ')}`);
+      await active.setInputFiles(paths);
     });
   }
 
-  async download(trigger: () => Promise<void>): Promise<Download> {
+  /** Upload in-memory file payload(s) without writing to disk first. */
+  async uploadPayload(
+    locator: Locator,
+    name: string,
+    files: UploadFilePayload | UploadFilePayload[],
+  ): Promise<void> {
+    await this.runWithHeal('uploadPayload', name, locator, async (active) => {
+      const list = Array.isArray(files) ? files : [files];
+      this.logger.info(`Upload payload: ${name} (${list.map((f) => f.name).join(', ')})`);
+      await active.setInputFiles(list);
+    });
+  }
+
+  /** Clear a file input (`setInputFiles([])`). */
+  async clearUpload(locator: Locator, name: string): Promise<void> {
+    await this.runWithHeal('clearUpload', name, locator, async (active) => {
+      this.logger.info(`Clear upload: ${name}`);
+      await active.setInputFiles([]);
+    });
+  }
+
+  // --- Downloads ----------------------------------------------------------------
+
+  /** Wait for a download started by `trigger` (e.g. clicking a link). */
+  async download(trigger: () => Promise<void>, timeout?: number): Promise<Download> {
     return this.run('download', undefined, async () => {
       this.logger.info('Wait for download');
-      const [download] = await Promise.all([this.page.waitForEvent('download'), trigger()]);
+      const [download] = await Promise.all([
+        this.page.waitForEvent('download', timeout != null ? { timeout } : undefined),
+        trigger(),
+      ]);
       return download;
     });
   }
 
+  /** Click a control and wait for the resulting download. */
+  async downloadByClick(
+    locator: Locator,
+    name: string,
+    options?: { timeout?: number; observe?: boolean },
+  ): Promise<Download> {
+    const download = await this.download(async () => {
+      await locator.click();
+    }, options?.timeout);
+    await this.observeAfterClick(name, options?.observe);
+    this.logger.info(`Download started via click: ${name} → ${download.suggestedFilename()}`);
+    return download;
+  }
+
+  /**
+   * Run `trigger`, wait for download, and save under `reports/downloads/` (or `saveDir`).
+   * Returns the Playwright Download plus the absolute saved path.
+   */
+  async downloadAndSave(
+    trigger: () => Promise<void>,
+    options?: { saveDir?: string; fileName?: string; timeout?: number },
+  ): Promise<SavedDownload> {
+    return this.run('downloadAndSave', undefined, async () => {
+      this.logger.info('Wait for download and save to disk');
+      const [download] = await Promise.all([
+        this.page.waitForEvent('download', options?.timeout != null ? { timeout: options.timeout } : undefined),
+        trigger(),
+      ]);
+      const suggestedFilename = download.suggestedFilename();
+      const saveDir = options?.saveDir || DOWNLOADS_DIR;
+      ensureDir(saveDir);
+      const fileName = options?.fileName || sanitizeFileName(suggestedFilename) || `download-${Date.now()}`;
+      const savedPath = path.join(saveDir, fileName);
+      await download.saveAs(savedPath);
+      this.logger.info(`Download saved: ${savedPath}`);
+      return { download, suggestedFilename, savedPath };
+    });
+  }
+
+  /** Click to download and save the file under `reports/downloads/` (or `saveDir`). */
+  async downloadByClickAndSave(
+    locator: Locator,
+    name: string,
+    options?: { saveDir?: string; fileName?: string; timeout?: number; observe?: boolean },
+  ): Promise<SavedDownload> {
+    const saved = await this.downloadAndSave(async () => {
+      await locator.click();
+    }, options);
+    await this.observeAfterClick(name, options?.observe);
+    this.logger.info(`Download via ${name} saved to ${saved.savedPath}`);
+    return saved;
+  }
+
+  // --- Frames / iframes ---------------------------------------------------------
+
+  /** FrameLocator for an iframe CSS/selector (preferred for actions inside iframes). */
   frame(selector: string): FrameLocator {
     this.logger.debug(`Resolve iframe ${selector}`);
     return this.page.frameLocator(selector);
+  }
+
+  /** Nested iframe: outer selector → inner selector. */
+  nestedFrame(outerSelector: string, innerSelector: string): FrameLocator {
+    this.logger.debug(`Resolve nested iframe ${outerSelector} >> ${innerSelector}`);
+    return this.page.frameLocator(outerSelector).frameLocator(innerSelector);
+  }
+
+  /** Locator inside an iframe (same as `frame(selector).locator(inner)`). */
+  inFrame(frameSelector: string, inner: string): Locator {
+    return this.frame(frameSelector).locator(inner);
+  }
+
+  /** Resolve a Playwright Frame by URL substring/RegExp (null if missing). */
+  getFrameByUrl(url: string | RegExp): Frame | null {
+    const frames = this.page.frames();
+    const match = frames.find((f) => (typeof url === 'string' ? f.url().includes(url) : url.test(f.url())));
+    this.logger.debug(`Frame by URL ${url}: ${match ? match.url() : 'not found'}`);
+    return match ?? null;
+  }
+
+  /** Resolve a Playwright Frame by name attribute (null if missing). */
+  getFrameByName(name: string): Frame | null {
+    const match = this.page.frame({ name });
+    this.logger.debug(`Frame by name ${name}: ${match ? match.url() : 'not found'}`);
+    return match ?? null;
+  }
+
+  /** Require a Frame by URL or throw. */
+  requireFrameByUrl(url: string | RegExp): Frame {
+    const frame = this.getFrameByUrl(url);
+    if (!frame) {
+      throw new ElementNotFoundError(`No iframe found matching URL ${url}`, {
+        action: 'requireFrameByUrl',
+      });
+    }
+    return frame;
+  }
+
+  /** Require a Frame by name or throw. */
+  requireFrameByName(name: string): Frame {
+    const frame = this.getFrameByName(name);
+    if (!frame) {
+      throw new ElementNotFoundError(`No iframe found with name "${name}"`, {
+        action: 'requireFrameByName',
+      });
+    }
+    return frame;
+  }
+
+  /** Click inside an iframe using FrameLocator (does not change page context). */
+  async clickInFrame(
+    frameSelector: string,
+    inner: string,
+    name: string,
+    options?: { observe?: boolean },
+  ): Promise<void> {
+    const locator = this.inFrame(frameSelector, inner);
+    await this.click(locator, name, options);
+  }
+
+  /** Fill inside an iframe using FrameLocator. */
+  async fillInFrame(frameSelector: string, inner: string, name: string, value: string): Promise<void> {
+    const locator = this.inFrame(frameSelector, inner);
+    await this.fill(locator, name, value);
+  }
+
+  // --- Shadow DOM ---------------------------------------------------------------
+
+  /**
+   * Pierce an open shadow root: host locator → inner CSS/text selector.
+   * Playwright pierces open shadow trees via chained locators; closed roots are not accessible.
+   */
+  inShadow(host: Locator, inner: string): Locator {
+    return host.locator(inner);
+  }
+
+  /** Same as `inShadow`, but host is resolved from a page CSS selector. */
+  shadowLocator(hostSelector: string, inner: string): Locator {
+    this.logger.debug(`Shadow locator: ${hostSelector} >> ${inner}`);
+    return this.page.locator(hostSelector).locator(inner);
+  }
+
+  /** Deep pierce through multiple open shadow hosts: host1 >> host2 >> … >> inner. */
+  deepShadowLocator(...selectors: string[]): Locator {
+    if (selectors.length < 2) {
+      throw new ConfigurationError('deepShadowLocator requires at least host + inner selectors', {
+        action: 'deepShadowLocator',
+      });
+    }
+    this.logger.debug(`Deep shadow locator: ${selectors.join(' >> ')}`);
+    let current: Locator = this.page.locator(selectors[0]);
+    for (let i = 1; i < selectors.length; i += 1) {
+      current = current.locator(selectors[i]);
+    }
+    return current;
+  }
+
+  async clickInShadow(
+    host: Locator,
+    inner: string,
+    name: string,
+    options?: { observe?: boolean },
+  ): Promise<void> {
+    await this.click(this.inShadow(host, inner), name, options);
+  }
+
+  async fillInShadow(host: Locator, inner: string, name: string, value: string): Promise<void> {
+    await this.fill(this.inShadow(host, inner), name, value);
+  }
+
+  async dblClickInShadow(
+    host: Locator,
+    inner: string,
+    name: string,
+    options?: { observe?: boolean },
+  ): Promise<void> {
+    await this.dblClick(this.inShadow(host, inner), name, options);
   }
 
   async press(key: string): Promise<void> {
@@ -280,9 +633,9 @@ export class PlaywrightActions {
   }
 
   async pressOn(locator: Locator, name: string, key: string): Promise<void> {
-    await this.run('pressOn', `${name} [${key}]`, async () => {
+    await this.runWithHeal('pressOn', name, locator, async (active) => {
       this.logger.info(`Press ${key} on ${name}`);
-      await locator.press(key);
+      await active.press(key);
     });
   }
 
@@ -298,8 +651,8 @@ export class PlaywrightActions {
   }
 
   async waitForVisible(locator: Locator, name: string, timeout?: number): Promise<void> {
-    await this.run('waitForVisible', name, async () => {
-      await this.waits.visible(locator, name, timeout);
+    await this.runWithHeal('waitForVisible', name, locator, async (active) => {
+      await this.waits.visible(active, name, timeout);
     });
   }
 
@@ -322,8 +675,8 @@ export class PlaywrightActions {
   }
 
   async getText(locator: Locator, name: string): Promise<string> {
-    return this.run('getText', name, async () => {
-      const text = (await locator.innerText()).trim();
+    return this.runWithHeal('getText', name, locator, async (active) => {
+      const text = (await active.innerText()).trim();
       this.logger.debug(`Text of ${name}: ${text}`);
       return text;
     });
@@ -361,7 +714,9 @@ export class PlaywrightActions {
   }
 
   async assertVisible(locator: Locator, name: string): Promise<void> {
-    await this.asserts.visible(locator, name);
+    await this.runWithHeal('assertVisible', name, locator, async (active) => {
+      await this.asserts.visible(active, name);
+    });
   }
 
   async assertText(locator: Locator, name: string, expected: string | RegExp): Promise<void> {
@@ -380,10 +735,231 @@ export class PlaywrightActions {
     await this.asserts.titleNotEmpty();
   }
 
-  async scrollIntoView(locator: Locator, name: string): Promise<void> {
-    await this.run('scrollIntoView', name, async () => {
-      await locator.scrollIntoViewIfNeeded();
+  async scrollIntoView(
+    locator: Locator,
+    name: string,
+    options?: { block?: ScrollLogicalPosition; inline?: ScrollLogicalPosition },
+  ): Promise<void> {
+    await this.runWithHeal('scrollIntoView', name, locator, async (active) => {
+      this.logger.info(`Scroll into view: ${name}`);
+      if (options?.block || options?.inline) {
+        await active.evaluate(
+          (el, opts) => {
+            el.scrollIntoView({
+              block: opts.block ?? 'nearest',
+              inline: opts.inline ?? 'nearest',
+              behavior: 'instant',
+            });
+          },
+          { block: options.block, inline: options.inline },
+        );
+        return;
+      }
+      await active.scrollIntoViewIfNeeded();
     });
+  }
+
+  /** Scroll the window by pixel offsets (positive Y = down). */
+  async scrollBy(deltaX: number, deltaY: number): Promise<void> {
+    await this.run('scrollBy', `${deltaX},${deltaY}`, async () => {
+      this.logger.info(`Scroll page by (${deltaX}, ${deltaY})`);
+      await this.page.evaluate(
+        ({ x, y }) => window.scrollBy(x, y),
+        { x: deltaX, y: deltaY },
+      );
+    });
+  }
+
+  /** Scroll the window to absolute document coordinates. */
+  async scrollTo(x: number, y: number): Promise<void> {
+    await this.run('scrollTo', `${x},${y}`, async () => {
+      this.logger.info(`Scroll page to (${x}, ${y})`);
+      await this.page.evaluate(({ left, top }) => window.scrollTo(left, top), { left: x, top: y });
+    });
+  }
+
+  /** Scroll to the top of the page. */
+  async scrollToTop(): Promise<void> {
+    await this.run('scrollToTop', undefined, async () => {
+      this.logger.info('Scroll to top of page');
+      await this.page.evaluate(() => window.scrollTo(0, 0));
+    });
+  }
+
+  /** Scroll to the bottom of the page (document height). */
+  async scrollToBottom(): Promise<void> {
+    await this.run('scrollToBottom', undefined, async () => {
+      this.logger.info('Scroll to bottom of page');
+      await this.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    });
+  }
+
+  /**
+   * Scroll a scrollable container element (overflow panel) by pixel offsets.
+   * Use when the page itself does not scroll but an inner div does.
+   */
+  async scrollElementBy(locator: Locator, name: string, deltaX: number, deltaY: number): Promise<void> {
+    await this.runWithHeal('scrollElementBy', name, locator, async (active) => {
+      this.logger.info(`Scroll element ${name} by (${deltaX}, ${deltaY})`);
+      await active.evaluate((el, { x, y }) => el.scrollBy(x, y), { x: deltaX, y: deltaY });
+    });
+  }
+
+  /** Scroll a container element to absolute scrollLeft/scrollTop. */
+  async scrollElementTo(locator: Locator, name: string, left: number, top: number): Promise<void> {
+    await this.runWithHeal('scrollElementTo', name, locator, async (active) => {
+      this.logger.info(`Scroll element ${name} to (${left}, ${top})`);
+      await active.evaluate((el, pos) => el.scrollTo(pos.left, pos.top), { left, top });
+    });
+  }
+
+  /** Mouse-wheel scroll at the current pointer position (or over a locator center). */
+  async mouseWheel(deltaX: number, deltaY: number, locator?: Locator, name?: string): Promise<void> {
+    await this.run('mouseWheel', name || `${deltaX},${deltaY}`, async () => {
+      if (locator) {
+        const box = await locator.boundingBox();
+        if (!box) {
+          throw new ElementNotFoundError(`Cannot mouse-wheel over "${name}" — no bounding box`, {
+            action: 'mouseWheel',
+            locator: name,
+          });
+        }
+        await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      }
+      this.logger.info(`Mouse wheel (${deltaX}, ${deltaY})${name ? ` over ${name}` : ''}`);
+      await this.page.mouse.wheel(deltaX, deltaY);
+    });
+  }
+
+  /** Current window scroll position. */
+  async getScrollPosition(): Promise<{ x: number; y: number }> {
+    return this.run('getScrollPosition', undefined, async () => {
+      return this.page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+    });
+  }
+
+  // --- JavaScript execution -----------------------------------------------------
+
+  /**
+   * Run a function in the page context and return its result.
+   * Prefer this for reading DOM state that locators cannot express cleanly.
+   */
+  async evaluate<T, Args extends unknown[] = []>(
+    pageFunction: (...args: Args) => T | Promise<T>,
+    ...args: Args
+  ): Promise<T> {
+    return this.run('evaluate', undefined, async () => {
+      this.logger.info('Execute JavaScript in page context');
+      return this.page.evaluate(pageFunction as never, args.length === 1 ? args[0] : args.length ? args : undefined);
+    });
+  }
+
+  /**
+   * Run JavaScript from a string expression/script in the page (like DevTools console).
+   * Example: `await actions.evaluateScript('document.title')`
+   */
+  async evaluateScript<T = unknown>(script: string, arg?: unknown): Promise<T> {
+    return this.run('evaluateScript', script.slice(0, 80), async () => {
+      this.logger.info(`Execute JavaScript script: ${script.slice(0, 120)}`);
+      if (arg === undefined) {
+        return this.page.evaluate(script) as Promise<T>;
+      }
+      return this.page.evaluate(
+        ([source, value]) => {
+          // eslint-disable-next-line no-new-func, @typescript-eslint/no-implied-eval
+          const fn = new Function('arg', `return (${source});`);
+          return fn(value);
+        },
+        [script, arg] as [string, unknown],
+      ) as Promise<T>;
+    });
+  }
+
+  /** Run a function on a matched element handle (locator → element). */
+  async evaluateOnLocator<T, Arg = unknown>(
+    locator: Locator,
+    name: string,
+    pageFunction: (element: Element, arg: Arg) => T | Promise<T>,
+    arg?: Arg,
+  ): Promise<T> {
+    return this.runWithHeal('evaluateOnLocator', name, locator, async (active) => {
+      this.logger.info(`Execute JavaScript on element: ${name}`);
+      return active.evaluate(pageFunction as never, arg as never) as Promise<T>;
+    });
+  }
+
+  /**
+   * Run JavaScript and return a JSHandle (for passing handles between evaluate calls).
+   * Dispose the handle when finished.
+   */
+  async evaluateHandle<Args extends unknown[] = []>(
+    pageFunction: (...args: Args) => unknown,
+    ...args: Args
+  ): Promise<Awaited<ReturnType<Page['evaluateHandle']>>> {
+    return this.run('evaluateHandle', undefined, async () => {
+      this.logger.info('Execute JavaScript evaluateHandle in page context');
+      return this.page.evaluateHandle(
+        pageFunction as never,
+        args.length === 1 ? args[0] : args.length ? args : undefined,
+      );
+    });
+  }
+
+  /** Dispatch a DOM event on an element via JavaScript (e.g. `input`, `change`, custom events). */
+  async dispatchDomEvent(
+    locator: Locator,
+    name: string,
+    eventType: string,
+    eventInit?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.runWithHeal('dispatchDomEvent', name, locator, async (active) => {
+      this.logger.info(`Dispatch DOM event "${eventType}" on ${name}`);
+      await active.dispatchEvent(eventType, eventInit);
+    });
+  }
+
+  /** Set a value on an input/textarea via JS and optionally fire `input`/`change` events. */
+  async setValueByJs(
+    locator: Locator,
+    name: string,
+    value: string,
+    options?: { emitEvents?: boolean },
+  ): Promise<void> {
+    await this.runWithHeal('setValueByJs', name, locator, async (active) => {
+      this.logger.info(`Set value via JS: ${name}`);
+      await active.evaluate(
+        (el, { next, emit }) => {
+          const input = el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+          input.value = next;
+          if (emit) {
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        },
+        { next: value, emit: options?.emitEvents !== false },
+      );
+    });
+  }
+
+  /** Read `window` / page property path, e.g. `localStorage.token` or `document.title`. */
+  async getPageProperty<T = unknown>(pathExpression: string): Promise<T> {
+    return this.run('getPageProperty', pathExpression, async () => {
+      this.logger.debug(`Read page property: ${pathExpression}`);
+      return this.page.evaluate((expr) => {
+        const parts = expr.split('.').filter(Boolean);
+        let current: unknown = globalThis;
+        for (const part of parts) {
+          if (current == null) return undefined as T;
+          current = (current as Record<string, unknown>)[part];
+        }
+        return current as T;
+      }, pathExpression);
+    });
+  }
+
+  /** `document.readyState` helper. */
+  async getDocumentReadyState(): Promise<string> {
+    return this.evaluate(() => document.readyState);
   }
 
   requireContext(): BrowserContext {
