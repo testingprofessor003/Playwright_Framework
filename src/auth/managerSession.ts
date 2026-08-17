@@ -1,12 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import lockfile from 'proper-lockfile';
 import { BrowserContext } from 'playwright';
 import { AUTH_DIR } from '../config/paths';
 import { logger } from '../logger/logger';
+import { withProjectLock } from '../utils/fileLock';
 
 export const MANAGER_STORAGE_STATE = path.join(AUTH_DIR, 'bank-manager.json');
-const AUTH_LOCK = path.join(AUTH_DIR, '.lock');
 
 export function hasSavedManagerSession(): boolean {
   if (!fs.existsSync(MANAGER_STORAGE_STATE)) return false;
@@ -25,21 +24,12 @@ export function hasSavedManagerSession(): boolean {
 
 export async function saveManagerSession(context: BrowserContext): Promise<void> {
   fs.mkdirSync(AUTH_DIR, { recursive: true });
-  await context.storageState({ path: MANAGER_STORAGE_STATE });
+  await withProjectLock('manager-session', async () => {
+    await context.storageState({ path: MANAGER_STORAGE_STATE });
+  });
   logger.info(`Saved bank manager session to ${MANAGER_STORAGE_STATE}`);
 }
 
 export async function withManagerSessionLock<T>(fn: () => Promise<T>): Promise<T> {
-  fs.mkdirSync(AUTH_DIR, { recursive: true });
-  if (!fs.existsSync(AUTH_LOCK)) {
-    fs.writeFileSync(AUTH_LOCK, '', 'utf8');
-  }
-  const release = await lockfile.lock(AUTH_LOCK, {
-    retries: { retries: 40, minTimeout: 250, maxTimeout: 2000 },
-  });
-  try {
-    return await fn();
-  } finally {
-    await release();
-  }
+  return withProjectLock('manager-session', fn);
 }

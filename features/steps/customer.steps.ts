@@ -5,8 +5,9 @@ When('I open the bank manager portal', { timeout: 60000 }, async function (this:
   await this.customer.openBankManagerPortal();
 });
 
-When('I add a new customer with random data', { timeout: 120000 }, async function (this: CustomWorld) {
+When('I add a new customer', { timeout: 120000 }, async function (this: CustomWorld) {
   await this.customer.addCustomersWithRandomData(1);
+  await this.waits.sleep(5000, 'after customer created');
 });
 
 When('I add {int} customer with random data', { timeout: 300000 }, async function (this: CustomWorld, count: number) {
@@ -19,10 +20,12 @@ When('I add {int} customers with random data', { timeout: 300000 }, async functi
 
 When('I view the created customer in the customers list', { timeout: 60000 }, async function (this: CustomWorld) {
   await this.customer.viewCreatedCustomer();
+  await this.waits.sleep(3000, 'after viewing customers');
 });
 
 When('I view the created customers in the customers list', { timeout: 180000 }, async function (this: CustomWorld) {
   await this.customer.viewCreatedCustomers();
+  await this.waits.sleep(3000, 'after viewing customers');
 });
 
 Then('the customer should be created successfully', { timeout: 60000 }, async function (this: CustomWorld) {
@@ -127,8 +130,18 @@ Then('I should be logged in as the created customer', { timeout: 60000 }, async 
 
 When('I deposit a random amount into the created customer account', { timeout: 120000 }, async function (this: CustomWorld) {
   await this.customer.depositRandomAmount();
+  await this.waits.sleep(3000, 'after deposit amount');
 });
 
 Then('the deposit should be completed', { timeout: 60000 }, async function (this: CustomWorld) {
   await this.customer.assertDepositCompleted();
+});
+
+When('I withdraw the deposited amount from the created customer account', { timeout: 120000 }, async function (this: CustomWorld) {
+  await this.customer.withdrawDepositedAmount();
+  await this.waits.sleep(3000, 'after withdraw amount');
+});
+
+Then('the withdrawal should be completed', { timeout: 60000 }, async function (this: CustomWorld) {
+  await this.customer.assertWithdrawCompleted();
 });

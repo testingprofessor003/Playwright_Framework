@@ -4,6 +4,8 @@
  */
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
+import { chromium } from 'playwright';
 import {
   AlignmentType,
   Document,
@@ -21,7 +23,102 @@ import {
 import PptxGenJS from 'pptxgenjs';
 
 const DOCS = path.join(process.cwd(), 'docs');
+const DIAGRAM_DIR = path.join(DOCS, 'diagrams');
 const LOGO = path.join(process.cwd(), 'src', 'reports', 'assets', 'testing-professor-logo.png');
+
+interface HldDiagram {
+  title: string;
+  file: string;
+}
+
+function pngSize(file: string): { width: number; height: number } {
+  const buf = fs.readFileSync(file);
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+function fitBox(pxW: number, pxH: number, maxW: number, maxH: number): { w: number; h: number } {
+  const scale = Math.min(maxW / pxW, maxH / pxH);
+  return { w: Number((pxW * scale).toFixed(3)), h: Number((pxH * scale).toFixed(3)) };
+}
+
+function slug(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+async function launchHeadlessBrowser() {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch {
+    return await chromium.launch({ headless: true, channel: 'chrome' });
+  }
+}
+
+/** Render mermaid diagrams from docs/hld.html to PNG files. */
+async function renderHldDiagrams(): Promise<HldDiagram[]> {
+  const html = path.join(DOCS, 'hld.html');
+  if (!fs.existsSync(html)) {
+    throw new Error(`Missing ${html}`);
+  }
+  fs.mkdirSync(DIAGRAM_DIR, { recursive: true });
+  for (const existing of fs.readdirSync(DIAGRAM_DIR)) {
+    if (existing.startsWith('hld-') && existing.endsWith('.png')) {
+      fs.unlinkSync(path.join(DIAGRAM_DIR, existing));
+    }
+  }
+
+  const browser = await launchHeadlessBrowser();
+  const page = await browser.newPage({
+    viewport: { width: 1400, height: 900 },
+    deviceScaleFactor: 2,
+  });
+  try {
+    await page.goto(pathToFileURL(html).href, { waitUntil: 'networkidle', timeout: 60_000 });
+    await page.addStyleTag({
+      content: '.mermaid { background: #ffffff; padding: 16px; border-radius: 8px; }',
+    });
+    await page.waitForFunction(
+      () => {
+        const nodes = [...document.querySelectorAll('.mermaid')];
+        return nodes.length > 0 && nodes.every((node) => node.querySelector('svg'));
+      },
+      { timeout: 30_000 },
+    );
+
+    const titles = (await page.evaluate(`(() => {
+      const nodes = [...document.querySelectorAll('.mermaid')];
+      return nodes.map((el) => {
+        let cur = el.previousElementSibling;
+        while (cur) {
+          if (cur.matches('h2, h3')) {
+            return (cur.textContent || '').replace(/^\\d+(?:\\.\\d+)*\\.?\\s+/, '').trim();
+          }
+          cur = cur.previousElementSibling;
+        }
+        return 'HLD diagram';
+      });
+    })()`)) as string[];
+
+    const locators = page.locator('.mermaid');
+    const count = await locators.count();
+    if (count === 0) {
+      throw new Error('No mermaid diagrams found in docs/hld.html');
+    }
+
+    const diagrams: HldDiagram[] = [];
+    for (let i = 0; i < count; i++) {
+      const title = titles[i] || `HLD diagram ${i + 1}`;
+      const file = path.join(DIAGRAM_DIR, `hld-${String(i + 1).padStart(2, '0')}-${slug(title)}.png`);
+      await locators.nth(i).screenshot({ path: file, type: 'png' });
+      diagrams.push({ title, file });
+    }
+    return diagrams;
+  } finally {
+    await browser.close();
+  }
+}
 
 const NAVY = '0B3B5A';
 const BLUE = '0284C7';
@@ -92,7 +189,7 @@ function simpleTable(headers: string[], rows: string[][]): Table {
   });
 }
 
-async function writeDocx(): Promise<string> {
+async function writeDocx(diagrams: HldDiagram[]): Promise<string> {
   const children: (Paragraph | Table)[] = [];
 
   if (fs.existsSync(LOGO)) {
@@ -152,6 +249,26 @@ async function writeDocx(): Promise<string> {
     bullet('Actions: clicks, drag/drop, frames, shadow DOM, upload/download, scroll, JavaScript'),
     bullet('Optional self-heal: cache → heuristics → optional LLM when SELF_HEAL_ENABLED=true'),
     bullet('Reporting: Allure, Extent activity HTML, custom failures, historical dashboard'),
+    heading('3.1 HLD diagrams', HeadingLevel.HEADING_1),
+    para('Captured from docs/hld.html (Mermaid) so stakeholders see the same architecture views as the HTML design.'),
+    ...diagrams.flatMap((diagram) => {
+      const { width, height } = pngSize(diagram.file);
+      const fit = fitBox(width, height, 620, 380);
+      return [
+        para(diagram.title, { bold: true }),
+        new Paragraph({
+          spacing: { after: 200 },
+          children: [
+            new ImageRun({
+              type: 'png',
+              data: fs.readFileSync(diagram.file),
+              transformation: { width: fit.w, height: fit.h },
+              altText: { title: diagram.title, description: diagram.title, name: diagram.title },
+            }),
+          ],
+        }),
+      ];
+    }),
     heading('4. Current automation scope', HeadingLevel.HEADING_1),
     simpleTable(
       ['Area', 'Coverage'],
@@ -193,6 +310,7 @@ async function writeDocx(): Promise<string> {
     heading('8. Related materials', HeadingLevel.HEADING_1),
     bullet('Technical detail: docs/lld.html / docs/lld.pdf'),
     bullet('Interactive HTML: docs/hld.html'),
+    bullet('Diagram PNGs: docs/diagrams/ (embedded in this briefing)'),
     bullet('This briefing: docs/hld-stakeholder.docx and docs/hld-stakeholder.pptx'),
   );
 
@@ -213,7 +331,7 @@ async function writeDocx(): Promise<string> {
   return out;
 }
 
-async function writePptx(): Promise<string> {
+async function writePptx(diagrams: HldDiagram[]): Promise<string> {
   const pptx = new PptxGenJS();
   pptx.author = 'Testing Professor';
   pptx.title = 'HLD Stakeholder Briefing — Playwright BDD Framework';
@@ -407,6 +525,62 @@ async function writePptx(): Promise<string> {
     );
   }
 
+  // HLD diagrams section divider
+  {
+    const s = pptx.addSlide();
+    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 10, h: 5.625, fill: { color: NAVY } });
+    s.addShape(pptx.ShapeType.rect, { x: 0, y: 4.9, w: 10, h: 0.725, fill: { color: YELLOW } });
+    s.addText('HLD diagrams', {
+      x: 0.5,
+      y: 1.9,
+      w: 9,
+      h: 0.7,
+      fontSize: 36,
+      bold: true,
+      color: WHITE,
+    });
+    s.addText('Captured from docs/hld.html — system context through LLM routing', {
+      x: 0.5,
+      y: 2.7,
+      w: 9,
+      h: 0.45,
+      fontSize: 16,
+      color: 'BAE6FD',
+    });
+    s.addText(`${diagrams.length} architecture views attached`, {
+      x: 0.5,
+      y: 5.05,
+      w: 9,
+      h: 0.35,
+      fontSize: 14,
+      color: NAVY,
+      bold: true,
+    });
+  }
+
+  for (const diagram of diagrams) {
+    const s = pptx.addSlide();
+    s.addText(diagram.title, {
+      x: 0.4,
+      y: 0.22,
+      w: 8,
+      h: 0.4,
+      fontSize: 22,
+      bold: true,
+      color: NAVY,
+    });
+    addLogo(s);
+    const { width, height } = pngSize(diagram.file);
+    const fit = fitBox(width, height, 9.2, 4.7);
+    s.addImage({
+      path: diagram.file,
+      x: Number(((10 - fit.w) / 2).toFixed(3)),
+      y: Number((0.7 + (4.75 - fit.h) / 2).toFixed(3)),
+      w: fit.w,
+      h: fit.h,
+    });
+  }
+
   // Scope
   {
     const s = pptx.addSlide();
@@ -583,9 +757,14 @@ async function writePptx(): Promise<string> {
 
 async function main(): Promise<void> {
   fs.mkdirSync(DOCS, { recursive: true });
-  const docxPath = await writeDocx();
+  const diagrams = await renderHldDiagrams();
+  console.log(`Captured ${diagrams.length} HLD diagrams under docs/diagrams/`);
+  for (const diagram of diagrams) {
+    console.log(`  - ${diagram.title} (${path.relative(process.cwd(), diagram.file)})`);
+  }
+  const docxPath = await writeDocx(diagrams);
   console.log(`Wrote ${docxPath}`);
-  const pptxPath = await writePptx();
+  const pptxPath = await writePptx(diagrams);
   console.log(`Wrote ${pptxPath}`);
 }
 

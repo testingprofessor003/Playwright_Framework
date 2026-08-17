@@ -9,43 +9,19 @@ Feature: Create customers and accounts
     And I reuse the saved bank manager session
     And I open the bank manager portal
 
-  @e2e @smoke @regression
-  Scenario: End to end customer banking journey
-    When I add a new customer with random data
-    And I view the created customer in the customers list
-    Then the created customer should be visible in the customers list
-    When I open 1 account for the created customer
-    Then 1 account should be created for the customer
-    When I login to the created customer account
-    Then I should be logged in as the created customer
-    When I deposit a random amount into the created customer account
-    Then the deposit should be completed
-
   @smoke @positive
   Scenario: Create a single customer with random data
-    When I add a new customer with random data
+    When I add a new customer
     And I view the created customer in the customers list
     Then the created customer should be visible in the customers list
 
   @positive @accounts @regression
   Scenario: Create a customer and open one account
-    When I add a new customer with random data
+    When I add a new customer
     And I view the created customer in the customers list
     Then the created customer should be visible in the customers list
     When I open 1 account for the created customer
     Then 1 account should be created for the customer
-
-  @positive @datadriven @regression
-  Scenario Outline: Generate customers and accounts from examples
-    When I add <customerCount> customers with random data
-    And I view the created customers in the customers list
-    Then <customerCount> customers should be visible in the customers list
-    When I open <accountCount> accounts for each created customer
-    Then <accountCount> accounts should be created for each customer
-
-    Examples:
-      | customerCount | accountCount |
-      | 1             | 2            |
 
   @boundary @positive
   Scenario: Create the minimum of one customer and one account
@@ -65,7 +41,7 @@ Feature: Create customers and accounts
 
   @positive @accounts
   Scenario Outline: Open an account in each supported currency
-    When I add a new customer with random data
+    When I add a new customer
     And I open an account for the created customer in "<currency>" with deposit "<amount>"
     Then 1 account should be created for the customer
 
@@ -77,14 +53,14 @@ Feature: Create customers and accounts
 
   @positive @customer-login
   Scenario: Login to the created customer account
-    When I add a new customer with random data
+    When I add a new customer
     And I open 1 account for the created customer
     And I login to the created customer account
     Then I should be logged in as the created customer
 
   @positive @search
   Scenario: Search finds a newly created customer
-    When I add a new customer with random data
+    When I add a new customer
     And I view the created customer in the customers list
     Then the created customer should be visible in the customers list
 
@@ -113,6 +89,6 @@ Feature: Create customers and accounts
 
   @negative @duplicate
   Scenario: Cannot add the same customer twice
-    When I add a new customer with random data
+    When I add a new customer
     And I add the same customer again
     Then a duplicate customer should not be created

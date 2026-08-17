@@ -1,10 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { lock } from 'proper-lockfile';
 import { EXTENT_DATA_DIR, EXTENT_REPORT_DIR, ensureDirs } from '../../config/paths';
 import { nowIso } from '../../utils/dates';
 import { ActivityStatus, ExtentActivity, ExtentStep, ExtentTest } from './types';
+import { withProjectLock } from '../../utils/fileLock';
 
 let current: ActivityReporter | undefined;
 let suppressWinston = 0;
@@ -227,8 +227,7 @@ export async function resetExtentData(runId: string, runName: string): Promise<v
   if (!fs.existsSync(marker)) {
     fs.writeFileSync(marker, '', 'utf8');
   }
-  const release = await lock(marker, { retries: { retries: 20, minTimeout: 20 } });
-  try {
+  await withProjectLock('extent-run', async () => {
     const previous = fs.readFileSync(marker, 'utf8').trim();
     if (previous === runId) return;
     if (fs.existsSync(EXTENT_DATA_DIR)) {
@@ -244,7 +243,5 @@ export async function resetExtentData(runId: string, runName: string): Promise<v
       'utf8',
     );
     fs.writeFileSync(marker, runId, 'utf8');
-  } finally {
-    await release();
-  }
+  });
 }

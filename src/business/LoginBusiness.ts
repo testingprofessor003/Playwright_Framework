@@ -60,24 +60,24 @@ export class LoginBusiness extends BaseBusiness {
    * First use in a run signs in through the UI once and saves storageState.
    */
   async reuseSavedBankManagerSession(): Promise<void> {
-    await withManagerSessionLock(async () => {
-      if (hasSavedManagerSession()) {
-        await this.applySavedManagerSession();
-        const loginPage = this.pageObject(LoginPage);
-        if (!(await loginPage.isOnLoginScreen())) {
-          this.logger.info('Reused saved bank manager session; skipped UI sign-in');
-          await loginPage.assertSignedIn();
-          return;
-        }
-        this.logger.warn('Saved bank manager session expired; signing in through the UI');
-      } else {
-        this.logger.info('No saved bank manager session; signing in through the UI once and saving it');
-      }
+    const existing = await withManagerSessionLock(async () => hasSavedManagerSession());
 
-      const { email, password } = requireAppCredentials();
-      await this.signIn(email, password);
-      await saveManagerSession(this.context);
-    });
+    if (existing) {
+      await this.applySavedManagerSession();
+      const loginPage = this.pageObject(LoginPage);
+      if (!(await loginPage.isOnLoginScreen())) {
+        this.logger.info('Reused saved bank manager session; skipped UI sign-in');
+        await loginPage.assertSignedIn();
+        return;
+      }
+      this.logger.warn('Saved bank manager session expired; signing in through the UI');
+    } else {
+      this.logger.info('No saved bank manager session; signing in through the UI once and saving it');
+    }
+
+    const { email, password } = requireAppCredentials();
+    await this.signIn(email, password);
+    await saveManagerSession(this.context);
   }
 
   private async applySavedManagerSession(): Promise<void> {

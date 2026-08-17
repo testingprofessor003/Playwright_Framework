@@ -1,8 +1,8 @@
-import { lock } from 'proper-lockfile';
 import { SHARED_BUFFER_FILE, REPORTS_DIR } from '../config/paths';
 import { SharedStoreError } from '../errors/errors';
 import { env } from '../config/env';
 import { deleteSharedKv, getSharedKv, upsertSharedKv } from '../db/repository';
+import { withProjectLock } from '../utils/fileLock';
 import fs from 'fs';
 
 export type BufferScope = 'scenario' | 'worker' | 'global';
@@ -33,19 +33,13 @@ async function withFileLock<T>(fn: () => Promise<T> | T): Promise<T> {
   if (!fs.existsSync(SHARED_BUFFER_FILE)) {
     fs.writeFileSync(SHARED_BUFFER_FILE, '{}', 'utf8');
   }
-  let release: (() => Promise<void>) | undefined;
   try {
-    release = await lock(SHARED_BUFFER_FILE, { retries: { retries: 15, minTimeout: 30 } });
-    return await fn();
+    return await withProjectLock('shared-buffer', fn);
   } catch (error) {
     throw new SharedStoreError(
       `Shared buffer file lock failed: ${error instanceof Error ? error.message : String(error)}`,
       { action: 'sharedBuffer.lock', cause: error },
     );
-  } finally {
-    if (release) {
-      await release();
-    }
   }
 }
 

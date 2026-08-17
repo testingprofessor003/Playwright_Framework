@@ -1,8 +1,8 @@
-import { BrowserContext, Page } from 'playwright';
+import { BrowserContext, Locator, Page } from 'playwright';
 import { BasePage } from './BasePage';
 import { FrameworkLogger } from '../logger/logger';
 import { CustomerData, customerFullName, customerInitials } from '../testdata/customerFactory';
-import { DepositData } from '../testdata/accountFactory';
+import { DepositData, WithdrawData } from '../testdata/accountFactory';
 import { SelectedOption } from '../utils/PlaywrightActions';
 
 export class CustomerDashboardPage extends BasePage {
@@ -45,19 +45,39 @@ export class CustomerDashboardPage extends BasePage {
   }
 
   private get depositAccountCombobox() {
-    return this.depositPanel.getByRole('combobox').first();
+    return this.accountCombobox(this.depositPanel);
   }
 
   private get depositCategoryCombobox() {
-    const byName = this.depositPanel.getByRole('combobox', { name: /category/i });
-    const byOption = this.depositPanel.getByRole('combobox').filter({
-      has: this.page.locator('option', { hasText: 'No Category' }),
-    });
-    return byName.or(byOption).first();
+    return this.categoryCombobox(this.depositPanel);
   }
 
   private get depositFundsButton() {
     return this.page.getByRole('button', { name: 'Deposit Funds' });
+  }
+
+  private get withdrawTab() {
+    return this.page.getByRole('tab', { name: 'Withdraw' });
+  }
+
+  private get withdrawPanel() {
+    return this.page.getByRole('tabpanel', { name: 'Withdraw' });
+  }
+
+  private get withdrawAmountInput() {
+    return this.withdrawPanel.getByPlaceholder('0.00');
+  }
+
+  private get withdrawAccountCombobox() {
+    return this.accountCombobox(this.withdrawPanel);
+  }
+
+  private get withdrawCategoryCombobox() {
+    return this.categoryCombobox(this.withdrawPanel);
+  }
+
+  private get withdrawFundsButton() {
+    return this.page.getByRole('button', { name: /withdraw( funds)?/i });
   }
 
   async goBackFromPortal(): Promise<void> {
@@ -124,40 +144,26 @@ export class CustomerDashboardPage extends BasePage {
     await this.waits.visible(this.depositAmountInput, 'Deposit amount');
     await this.actions.click(this.depositAmountInput, 'Deposit amount', { observe: false });
     await this.actions.fill(this.depositAmountInput, 'Deposit amount', amount);
-    this.logger.info(`Entering randomised deposit amount: ${amount}`);
+    this.logger.info(`Entering deposit amount: ${amount}`);
   }
 
   async selectDepositAccount(currency?: string): Promise<SelectedOption> {
-    await this.waits.visible(this.depositAccountCombobox, 'Deposit account');
-    if (currency?.trim()) {
-      const option = this.depositAccountCombobox.locator('option').filter({ hasText: new RegExp(currency, 'i') }).first();
-      const value = await option.getAttribute('value').catch(() => null);
-      if (value) {
-        const selected = await this.actions.select(this.depositAccountCombobox, 'Deposit account', value);
-        this.logger.info(`Selected deposit account matching ${currency}: ${selected.label}`);
-        return selected;
-      }
-    }
-
-    const selected = await this.actions.selectRandom(this.depositAccountCombobox, 'Deposit account');
-    this.logger.info(`Deposit account was not specified — selected random account: ${selected.label}`);
-    return selected;
+    return this.selectSharedAccount(this.depositAccountCombobox, 'Deposit account', currency);
   }
 
   async selectDepositCategory(): Promise<SelectedOption> {
-    await this.waits.visible(this.depositCategoryCombobox, 'Category');
-    const selected = await this.actions.selectRandom(this.depositCategoryCombobox, 'Category', {
-      exclude: ['No Category'],
-    });
-    this.logger.info(`Selected random deposit category (excluding No Category): ${selected.label}`);
-    return selected;
+    return this.selectRandomCategory(this.depositCategoryCombobox, 'Deposit category');
   }
 
   async submitDeposit(): Promise<void> {
     await this.actions.click(this.depositFundsButton, 'Deposit Funds');
+    await this.waits.sleep(3000, 'after deposit completed');
   }
 
   async depositRandomAmount(amount: string, currency?: string): Promise<DepositData> {
+    this.logger.info(
+      `Depositing ${amount} into the shared-memory account${currency ? ` (${currency})` : ''}`,
+    );
     await this.openDepositTab();
     await this.enterDepositAmount(amount);
     const account = await this.selectDepositAccount(currency);
@@ -181,5 +187,132 @@ export class CustomerDashboardPage extends BasePage {
 
     await this.waits.visible(this.depositFundsButton, 'Deposit Funds');
     this.logger.info(`Deposit submitted for amount ${amount}`);
+  }
+
+  async openWithdrawTab(): Promise<void> {
+    await this.waits.visible(this.withdrawTab, 'Withdraw tab');
+    await this.actions.click(this.withdrawTab, 'Withdraw tab');
+    await this.waits.visible(this.withdrawAmountInput, 'Withdraw amount');
+  }
+
+  async enterWithdrawAmount(amount: string): Promise<void> {
+    await this.waits.visible(this.withdrawAmountInput, 'Withdraw amount');
+    await this.actions.click(this.withdrawAmountInput, 'Withdraw amount', { observe: false });
+    await this.actions.fill(this.withdrawAmountInput, 'Withdraw amount', amount);
+    this.logger.info(`Entering withdraw amount: ${amount}`);
+  }
+
+  async selectWithdrawAccount(currency?: string): Promise<SelectedOption> {
+    return this.selectSharedAccount(this.withdrawAccountCombobox, 'Withdraw account', currency);
+  }
+
+  async selectWithdrawCategory(): Promise<SelectedOption> {
+    return this.selectRandomCategory(this.withdrawCategoryCombobox, 'Withdraw category');
+  }
+
+  async submitWithdraw(): Promise<void> {
+    await this.actions.click(this.withdrawFundsButton, 'Withdraw Funds');
+    await this.waits.sleep(3000, 'after withdrawal completed');
+  }
+
+  async withdrawAmount(amount: string, currency?: string): Promise<WithdrawData> {
+    this.logger.info(
+      `Withdrawing ${amount} from the shared-memory account${currency ? ` (${currency})` : ''}`,
+    );
+    await this.openWithdrawTab();
+    await this.enterWithdrawAmount(amount);
+    const account = await this.selectWithdrawAccount(currency);
+    const category = await this.selectWithdrawCategory();
+    await this.submitWithdraw();
+    return {
+      amount,
+      accountLabel: account.label,
+      accountValue: account.value,
+      category: category.label,
+    };
+  }
+
+  async assertWithdrawCompleted(amount: string): Promise<void> {
+    const success = this.page
+      .getByText(/withdraw(n|al)? (successful|complete)|funds withdrawn|success/i)
+      .first();
+    const successVisible = await success.isVisible().catch(() => false);
+    if (successVisible) {
+      this.logger.info(`Withdrawal confirmation shown for amount ${amount}`);
+      return;
+    }
+
+    await this.waits.visible(this.withdrawFundsButton, 'Withdraw Funds');
+    this.logger.info(`Withdrawal submitted for amount ${amount}`);
+  }
+
+  private categoryCombobox(panel: Locator): Locator {
+    const byName = panel.getByRole('combobox', { name: /category/i });
+    const byOption = panel.getByRole('combobox').filter({
+      has: this.page.locator('option', { hasText: /no category/i }),
+    });
+    return byName.or(byOption).first();
+  }
+
+  private accountCombobox(panel: Locator): Locator {
+    const byName = panel.getByRole('combobox', { name: /account/i });
+    const byCurrency = panel.getByRole('combobox').filter({
+      has: this.page.locator('option', { hasText: /pound|dollar|rupee/i }),
+    });
+    return byName.or(byCurrency).first();
+  }
+
+  private async selectRandomCategory(combobox: Locator, name: string): Promise<SelectedOption> {
+    await this.waits.selectOptionsReady(combobox, name);
+    const selected = await this.actions.select(combobox, name);
+    this.logger.info(`Selected random ${name} from the dropdown: ${selected.label}`);
+    return selected;
+  }
+
+  private async selectSharedAccount(
+    combobox: Locator,
+    name: string,
+    currency?: string,
+  ): Promise<SelectedOption> {
+    await this.waits.selectOptionsReady(combobox, name);
+    if (await this.isCategoryCombobox(combobox)) {
+      const selected = await this.actions.select(combobox, name);
+      this.logger.info(`${name} resolved to the category dropdown — selected random option "${selected.label}"`);
+      return selected;
+    }
+
+    const wanted = currency?.trim();
+    if (wanted) {
+      const option = combobox.locator('option').filter({ hasText: new RegExp(wanted, 'i') }).first();
+      if ((await option.count()) > 0) {
+        const value = await option.getAttribute('value', { timeout: 1000 }).catch(() => null);
+        if (value) {
+          const selected = await this.actions.select(combobox, name, value);
+          this.logger.info(`Selected ${name} using shared-memory currency ${wanted}: ${selected.label}`);
+          return selected;
+        }
+      }
+
+      const labels = (await combobox.locator('option').allTextContents()).map((text) => text.trim());
+      const match = labels.find((label) => label.toLowerCase().includes(wanted.toLowerCase()));
+      if (match) {
+        const selected = await this.actions.select(combobox, name, { label: match });
+        this.logger.info(`Selected ${name} using shared-memory currency ${wanted}: ${selected.label}`);
+        return selected;
+      }
+
+      this.logger.info(`${name} has no option matching currency "${wanted}"; picking a random account`);
+    }
+
+    const selected = await this.actions.select(combobox, name);
+    this.logger.info(`${name} selected ${selected.label}`);
+    return selected;
+  }
+
+  private async isCategoryCombobox(combobox: Locator): Promise<boolean> {
+    const labels = (await combobox.locator('option').allTextContents()).map((text) =>
+      text.replace(/\s+/g, ' ').trim().toLowerCase(),
+    );
+    return labels.some((label) => label.includes('no category'));
   }
 }

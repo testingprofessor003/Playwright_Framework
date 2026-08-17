@@ -94,10 +94,11 @@ export class OpenAccountPage extends BasePage {
 
   async submitOpenAccount(): Promise<void> {
     await this.actions.click(this.openAccountButton, 'Open Account');
+    await this.waits.sleep(3000, 'after account created');
   }
 
   async openAccount(customerName: string, currency: string, amount: string): Promise<void> {
-    this.logger.info(`Opening account for ${customerName}: ${currency} ${amount}`);
+    this.logger.info(`Opening account using shared-memory customer "${customerName}": ${currency} ${amount}`);
     await this.openOpenAccountTab();
     await this.selectCreatedCustomer(customerName);
     await this.selectCurrency(currency);
@@ -108,7 +109,7 @@ export class OpenAccountPage extends BasePage {
   async openAccountsForCustomer(customerName: string, accounts: AccountData[]): Promise<void> {
     for (const [index, account] of accounts.entries()) {
       this.logger.info(
-        `Opening account ${index + 1}/${accounts.length} for ${customerName}: ${account.currency} ${account.amount}`,
+        `Opening account ${index + 1}/${accounts.length} using shared-memory customer "${customerName}": ${account.currency} ${account.amount}`,
       );
       await this.openOpenAccountTab();
       await this.selectCreatedCustomer(customerName);

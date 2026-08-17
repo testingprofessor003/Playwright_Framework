@@ -1,5 +1,5 @@
 import { IWorldOptions, World, setWorldConstructor } from '@cucumber/cucumber';
-import { Browser, BrowserContext, Page } from 'playwright';
+import { Browser, BrowserContext, Page, type Video } from 'playwright';
 import { PlaywrightActions } from '../utils/PlaywrightActions';
 import { Assertions } from '../utils/Assertions';
 import { WaitConditions } from '../utils/WaitConditions';
@@ -30,6 +30,8 @@ export class CustomWorld extends World {
   screenshotPath?: string;
   videoPath?: string;
   tracePath?: string;
+  /** Video handles from contexts closed mid-scenario (e.g. storageState reuse). */
+  closedVideos: Video[] = [];
   lastError?: unknown;
   browserName = env.browser;
 
@@ -48,8 +50,15 @@ export class CustomWorld extends World {
     if (this.context && shouldRecordArtifact(env.trace)) {
       await this.context.tracing.stop().catch(() => undefined);
     }
+    let previousVideo: Video | undefined;
+    try {
+      previousVideo = this.page?.video() ?? undefined;
+    } catch {
+      previousVideo = undefined;
+    }
     await this.page?.close().catch(() => undefined);
     await this.context?.close().catch(() => undefined);
+    if (previousVideo) this.closedVideos.push(previousVideo);
 
     this.context = await this.browser.newContext(getContextOptions({ storageState }));
     this.context.setDefaultTimeout(env.defaultTimeout);

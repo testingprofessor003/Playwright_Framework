@@ -9,7 +9,7 @@ import {
   setDefaultTimeout,
   Status,
 } from '@cucumber/cucumber';
-import { Browser } from 'playwright';
+import { Browser, type Video } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -23,7 +23,7 @@ import { getOrCreateRunId, getWorkerId } from '../config/runContext';
 import { PlaywrightActions } from '../utils/PlaywrightActions';
 import { TRACES_DIR, VIDEOS_DIR, ALLURE_RESULTS_DIR } from '../config/paths';
 import { shouldKeepArtifact, shouldRecordArtifact } from '../config/artifacts';
-import { sanitizeFileName } from '../utils/files';
+import { sanitizeFileName, waitForReadableFile } from '../utils/files';
 import { buildRunName, stamp } from '../utils/dates';
 import { mapPlaywrightError } from '../errors/mapPlaywrightError';
 import { FrameworkError } from '../errors/errors';
@@ -34,7 +34,7 @@ import { closeDb } from '../db/adapter';
 import { beginScenarioReporter, endScenarioReporter, getActivityReporter, resetExtentData } from '../reports/extent/ActivityReporter';
 import { generateCustomFailureReport } from '../reports/customFailureReport';
 import { runTriage } from '../ai/runTriage';
-import { publishScreenshot, scenarioScreenshotPath, stepScreenshotPath } from '../reports/publishArtifacts';
+import { publishScreenshot, publishVideo, scenarioScreenshotPath, stepScreenshotPath } from '../reports/publishArtifacts';
 
 setDefaultTimeout(Number(process.env.CUCUMBER_TIMEOUT || 60000));
 setGlobalTestRuntime(new AllureCucumberTestRuntime());
@@ -70,23 +70,84 @@ function stepKeyword(pickleStep: { type?: string | number }): string {
   return '';
 }
 
-/** Move Playwright's temp webm into recordings/test-runs with a readable scenario name. */
-async function persistScenarioVideo(sourcePath: string, scenarioName: string, scenarioId: string): Promise<string> {
+function scenarioVideoTarget(scenarioName: string, scenarioId: string): string {
+  return path.join(VIDEOS_DIR, `${sanitizeFileName(scenarioName)}-${scenarioId.slice(0, 8)}.webm`);
+}
+
+/** Save Playwright video after the page/context are closed. `saveAs` waits until the webm is fully written. */
+async function persistScenarioVideo(video: Video, scenarioName: string, scenarioId: string): Promise<string> {
   fs.mkdirSync(VIDEOS_DIR, { recursive: true });
-  const target = path.join(
-    VIDEOS_DIR,
-    `${sanitizeFileName(scenarioName)}-${scenarioId.slice(0, 8)}.webm`,
-  );
-  if (path.resolve(sourcePath) === path.resolve(target)) {
-    return target;
-  }
+  const target = scenarioVideoTarget(scenarioName, scenarioId);
   try {
-    fs.renameSync(sourcePath, target);
-  } catch {
-    fs.copyFileSync(sourcePath, target);
-    fs.unlinkSync(sourcePath);
+    await video.saveAs(target);
+  } catch (saveError) {
+    const rawPath = await video.path().catch(() => undefined);
+    if (!rawPath || !fs.existsSync(rawPath)) {
+      throw saveError;
+    }
+    if (path.resolve(rawPath) !== path.resolve(target)) {
+      fs.copyFileSync(rawPath, target);
+    }
   }
+  const ready = await waitForReadableFile(target);
+  if (!ready) {
+    throw new Error(`Playwright finished recording but the webm is not readable yet: ${target}`);
+  }
+  await video.delete().catch(() => undefined);
   return target;
+}
+
+async function closeContextAndPersistVideo(world: CustomWorld, failed: boolean): Promise<void> {
+  let currentVideo: Video | undefined;
+  try {
+    currentVideo = world.page?.video() ?? undefined;
+  } catch {
+    currentVideo = undefined;
+  }
+
+  await world.page?.close().catch(() => undefined);
+  await world.context?.close().catch(() => undefined);
+
+  const videos = [...world.closedVideos, currentVideo].filter((item): item is Video => Boolean(item));
+  world.closedVideos = [];
+
+  const keep = shouldKeepArtifact(env.video, failed);
+  if (!keep) {
+    await Promise.all(videos.map((item) => item.delete().catch(() => undefined)));
+    world.videoPath = undefined;
+    return;
+  }
+
+  if (!videos.length) {
+    if (failed && shouldRecordArtifact(env.video)) {
+      world.logger.warn(
+        `Scenario failed but Playwright returned no video handle (VIDEO=${env.video}). The page may have closed before recording started.`,
+      );
+    }
+    return;
+  }
+
+  const errors: string[] = [];
+  for (let index = videos.length - 1; index >= 0; index -= 1) {
+    try {
+      world.videoPath = await persistScenarioVideo(videos[index], world.scenarioName, world.scenarioId);
+      await Promise.all(
+        videos.filter((_, other) => other !== index).map((item) => item.delete().catch(() => undefined)),
+      );
+      await publishVideo({
+        absPath: world.videoPath,
+        title: failed ? 'Failure video' : 'Scenario video',
+        attachToWorld: (data, mediaType) =>
+          world.attach(data, { mediaType, fileName: path.basename(world.videoPath!) }),
+      });
+      world.logger.info(`Scenario video saved: ${world.videoPath}`);
+      return;
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  world.logger.warn(`Could not persist scenario video: ${errors.join('; ')}`);
 }
 
 BeforeAll(async function () {
@@ -132,6 +193,11 @@ Before(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
   this.tags = pickleTags(scenario.pickle);
   this.startedAt = Date.now();
   this.stepIndex = 0;
+  this.screenshotPath = undefined;
+  this.videoPath = undefined;
+  this.tracePath = undefined;
+  this.closedVideos = [];
+  this.lastError = undefined;
   this.browserName = env.browser;
   this.initLogger();
   this.shared.clearScenario();
@@ -267,31 +333,11 @@ After(async function (this: CustomWorld, scenario: ITestCaseHookParameter) {
 
   try {
     if (env.keepBrowserOpen) {
-      this.logger.info('KEEP_BROWSER_OPEN=true — leaving the browser window open after this scenario');
+      this.logger.info(
+        'KEEP_BROWSER_OPEN=true — leaving the browser window open after this scenario (video cannot be finalized until the context closes)',
+      );
     } else {
-      const video = this.page?.video();
-      await this.page?.close();
-      await this.context?.close();
-      if (video) {
-        if (shouldKeepArtifact(env.video, failed)) {
-          const rawPath = await video.path();
-          if (rawPath && fs.existsSync(rawPath)) {
-            this.videoPath = await persistScenarioVideo(rawPath, this.scenarioName, this.scenarioId);
-            try {
-              await this.attach(fs.readFileSync(this.videoPath), {
-                mediaType: 'video/webm',
-                fileName: path.basename(this.videoPath),
-              });
-            } catch {
-              /* ignore */
-            }
-            this.logger.info(`Scenario video saved: ${this.videoPath}`);
-          }
-        } else {
-          await video.delete();
-          this.videoPath = undefined;
-        }
-      }
+      await closeContextAndPersistVideo(this, failed);
       if (env.executionEnv === 'browserstack') {
         await this.browser?.close();
       }

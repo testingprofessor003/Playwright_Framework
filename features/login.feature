@@ -8,3 +8,4 @@ Feature: Core banking login
     Given I launch the core banking application
     When I sign in with valid credentials
     Then I should be logged into the application
+

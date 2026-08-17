@@ -7,6 +7,7 @@ import {
   AssertionFailedError,
   BrowserLaunchError,
   StrictModeViolationError,
+  SharedStoreError,
   ErrorContext,
 } from './errors';
 
@@ -81,6 +82,14 @@ export function mapPlaywrightError(error: unknown, context: ErrorContext = {}): 
       return new ElementNotFoundError(labeled, ctx);
     }
     return new TimeoutExceededError(labeled, ctx);
+  }
+
+  if (
+    lower.includes('unable to update lock') ||
+    lower.includes('lockfile') ||
+    lower.includes('lock within the stale')
+  ) {
+    return new SharedStoreError(labeled, ctx);
   }
 
   return new FrameworkError(labeled, 'PW_UNKNOWN', 'UNKNOWN', ctx);

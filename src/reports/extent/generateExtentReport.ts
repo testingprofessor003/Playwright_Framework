@@ -75,11 +75,15 @@ function toBase64Screenshot(filePath?: string): string | undefined {
   return `data:${mime};base64,${fs.readFileSync(abs).toString('base64')}`;
 }
 
-function toRelativeArtifact(filePath?: string, kind: 'videos' | 'traces'): string | undefined {
+function toRelativeArtifact(filePath: string | undefined, kind: 'videos' | 'traces'): string | undefined {
   if (!filePath) return undefined;
   const abs = resolveArtifactFile(filePath) || path.resolve(filePath);
-  if (!fs.existsSync(abs)) return undefined;
-  // Stage under reports/extent/<kind>/ so file:// HTML can load media (browsers block ../).
+  if (!fs.existsSync(abs)) {
+    logger.warn(`Extent ${kind} artifact is missing on disk: ${filePath}`);
+    return undefined;
+  }
+  // Stage under reports/extent/<kind>/ and history/<kind>/ so both latest.html
+  // and history/*.html can use the same relative src without file:// `..` blocks.
   const staged = stageExtentArtifact(abs, kind);
   if (staged) return staged;
   return path.relative(EXTENT_REPORT_DIR, abs).replace(/\\/g, '/');
@@ -89,8 +93,8 @@ function withRelativeArtifacts(test: ExtentTest): ExtentTest {
   return {
     ...test,
     screenshot: toBase64Screenshot(test.screenshot) || test.screenshot,
-    video: toRelativeArtifact(test.video, 'videos') || test.video,
-    trace: toRelativeArtifact(test.trace, 'traces') || test.trace,
+    video: toRelativeArtifact(test.video, 'videos'),
+    trace: toRelativeArtifact(test.trace, 'traces'),
     steps: test.steps.map((step) => ({
       ...step,
       activities: step.activities.map((activity) => ({
@@ -588,7 +592,9 @@ export function renderExtentHtml(
         '<div class="artifacts">' +
         shotThumb(test.screenshot, 'Scenario screenshot', 'scenario') +
         (test.video
-          ? '<div class="artifact-video"><video class="shot" controls src="' + escape(test.video) + '"></video>' +
+          ? '<div class="artifact-video"><video class="shot" controls preload="metadata">' +
+            '<source src="' + escape(test.video) + '" type="video/webm">' +
+            '</video>' +
             '<p class="muted"><a href="' + escape(test.video) + '" download>Open / download scenario recording</a> ' +
             '<span>(' + escape(test.video) + ')</span></p></div>'
           : '') +

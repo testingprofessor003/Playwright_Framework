@@ -14,8 +14,17 @@ export interface DepositData {
   category?: string;
 }
 
+export interface WithdrawData {
+  amount: string;
+  accountLabel?: string;
+  accountValue?: string;
+  category?: string;
+}
+
 const CURRENCIES: Exclude<AccountCurrency, ''>[] = ['Pound', 'Dollar', 'Rupee'];
 const DEFAULT_AMOUNT = '40000';
+const RANDOM_TX_MIN = 1;
+const RANDOM_TX_MAX = 20000;
 
 export function accountsForCount(count: number, amount = DEFAULT_AMOUNT): AccountData[] {
   if (count < 1) {
@@ -28,6 +37,10 @@ export function accountsForCount(count: number, amount = DEFAULT_AMOUNT): Accoun
   }));
 }
 
-export function randomDepositAmount(min = 1000, max = 50000): string {
+export function randomDepositAmount(min = RANDOM_TX_MIN, max = RANDOM_TX_MAX): string {
   return String(faker.number.int({ min, max }));
+}
+
+export function randomWithdrawAmount(min = RANDOM_TX_MIN, max = RANDOM_TX_MAX): string {
+  return randomDepositAmount(min, max);
 }

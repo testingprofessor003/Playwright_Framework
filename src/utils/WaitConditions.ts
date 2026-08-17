@@ -134,6 +134,45 @@ export class WaitConditions {
     });
   }
 
+  /** Wait until a native <select> has loaded real options (not just a placeholder). */
+  async selectOptionsReady(
+    combobox: Locator,
+    name: string,
+    options?: { min?: number; exclude?: Array<string | RegExp> },
+  ): Promise<void> {
+    await this.visible(combobox, name);
+    const min = options?.min ?? 1;
+    await this.until(
+      async () => {
+        const labels = (await combobox.locator('option').allTextContents()).map((text) =>
+          text.replace(/\s+/g, ' ').trim(),
+        );
+        const usable = labels.filter((label) => {
+          if (!label) return false;
+          if (/^(select|choose|pick)\b/i.test(label) || /[…]$/.test(label)) return false;
+          return !options?.exclude?.some((rule) =>
+            rule instanceof RegExp
+              ? rule.test(label)
+              : label.toLowerCase() === rule.trim().toLowerCase() ||
+                label.toLowerCase().includes(rule.trim().toLowerCase()),
+          );
+        });
+        if (usable.length >= min) {
+          this.logger?.info(`${name} options ready (${usable.length})`);
+          return true;
+        }
+        return false;
+      },
+      {
+        timeout: env.defaultTimeout,
+        interval: 200,
+        message: `Timed out waiting for ${name} dropdown options to load`,
+        action: 'waitSelectOptions',
+        locator: name,
+      },
+    );
+  }
+
   private safeUrl(): string {
     try {
       return this.page.url();
