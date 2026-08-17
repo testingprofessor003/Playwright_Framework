@@ -108,6 +108,8 @@ export class CustomerBusiness extends BaseBusiness {
       customerNames.map((fullName) => ({ fullName })),
       accounts,
     );
+    await this.shared.set('accounts', accounts, { scope: 'scenario' });
+    await this.shared.set('accounts', accounts, { scope: 'global', ...SHARED_TTL });
     this.activate(openAccountPage);
   }
 

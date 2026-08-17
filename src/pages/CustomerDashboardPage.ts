@@ -45,15 +45,17 @@ export class CustomerDashboardPage extends BasePage {
   }
 
   private get depositAccountCombobox() {
-    return this.accountCombobox(this.depositPanel);
+    return this.labeledSelect('Account');
   }
 
   private get depositCategoryCombobox() {
-    return this.categoryCombobox(this.depositPanel);
+    return this.labeledSelect('Category');
   }
 
   private get depositFundsButton() {
-    return this.page.getByRole('button', { name: 'Deposit Funds' });
+    return this.depositPanel.getByRole('button', { name: /deposit funds/i }).or(
+      this.page.getByRole('button', { name: /deposit funds/i }),
+    ).first();
   }
 
   private get withdrawTab() {
@@ -69,15 +71,17 @@ export class CustomerDashboardPage extends BasePage {
   }
 
   private get withdrawAccountCombobox() {
-    return this.accountCombobox(this.withdrawPanel);
+    return this.labeledSelect('Account');
   }
 
   private get withdrawCategoryCombobox() {
-    return this.categoryCombobox(this.withdrawPanel);
+    return this.labeledSelect('Category');
   }
 
   private get withdrawFundsButton() {
-    return this.page.getByRole('button', { name: /withdraw( funds)?/i });
+    return this.withdrawPanel.getByRole('button', { name: /withdraw( funds)?/i }).or(
+      this.page.getByRole('button', { name: /withdraw( funds)?/i }),
+    ).first();
   }
 
   async goBackFromPortal(): Promise<void> {
@@ -138,6 +142,7 @@ export class CustomerDashboardPage extends BasePage {
     await this.waits.visible(this.depositTab, 'Deposit tab');
     await this.actions.click(this.depositTab, 'Deposit tab');
     await this.waits.visible(this.depositAmountInput, 'Deposit amount');
+    await this.actions.scrollBy(0, 100);
   }
 
   async enterDepositAmount(amount: string): Promise<void> {
@@ -147,8 +152,8 @@ export class CustomerDashboardPage extends BasePage {
     this.logger.info(`Entering deposit amount: ${amount}`);
   }
 
-  async selectDepositAccount(currency?: string): Promise<SelectedOption> {
-    return this.selectSharedAccount(this.depositAccountCombobox, 'Deposit account', currency);
+  async selectDepositAccount(currency?: string): Promise<SelectedOption | undefined> {
+    return this.selectAccountIfPresent(this.depositAccountCombobox, 'Deposit account', currency);
   }
 
   async selectDepositCategory(): Promise<SelectedOption> {
@@ -156,6 +161,7 @@ export class CustomerDashboardPage extends BasePage {
   }
 
   async submitDeposit(): Promise<void> {
+    await this.waits.enabled(this.depositFundsButton, 'Deposit Funds');
     await this.actions.click(this.depositFundsButton, 'Deposit Funds');
     await this.waits.sleep(3000, 'after deposit completed');
   }
@@ -171,8 +177,8 @@ export class CustomerDashboardPage extends BasePage {
     await this.submitDeposit();
     return {
       amount,
-      accountLabel: account.label,
-      accountValue: account.value,
+      accountLabel: account?.label,
+      accountValue: account?.value,
       category: category.label,
     };
   }
@@ -193,6 +199,7 @@ export class CustomerDashboardPage extends BasePage {
     await this.waits.visible(this.withdrawTab, 'Withdraw tab');
     await this.actions.click(this.withdrawTab, 'Withdraw tab');
     await this.waits.visible(this.withdrawAmountInput, 'Withdraw amount');
+    await this.actions.scrollBy(0, 100);
   }
 
   async enterWithdrawAmount(amount: string): Promise<void> {
@@ -202,8 +209,8 @@ export class CustomerDashboardPage extends BasePage {
     this.logger.info(`Entering withdraw amount: ${amount}`);
   }
 
-  async selectWithdrawAccount(currency?: string): Promise<SelectedOption> {
-    return this.selectSharedAccount(this.withdrawAccountCombobox, 'Withdraw account', currency);
+  async selectWithdrawAccount(currency?: string): Promise<SelectedOption | undefined> {
+    return this.selectAccountIfPresent(this.withdrawAccountCombobox, 'Withdraw account', currency);
   }
 
   async selectWithdrawCategory(): Promise<SelectedOption> {
@@ -211,6 +218,7 @@ export class CustomerDashboardPage extends BasePage {
   }
 
   async submitWithdraw(): Promise<void> {
+    await this.waits.enabled(this.withdrawFundsButton, 'Withdraw Funds');
     await this.actions.click(this.withdrawFundsButton, 'Withdraw Funds');
     await this.waits.sleep(3000, 'after withdrawal completed');
   }
@@ -223,11 +231,12 @@ export class CustomerDashboardPage extends BasePage {
     await this.enterWithdrawAmount(amount);
     const account = await this.selectWithdrawAccount(currency);
     const category = await this.selectWithdrawCategory();
+    await this.waits.observe('withdraw category selected');
     await this.submitWithdraw();
     return {
       amount,
-      accountLabel: account.label,
-      accountValue: account.value,
+      accountLabel: account?.label,
+      accountValue: account?.value,
       category: category.label,
     };
   }
@@ -246,26 +255,35 @@ export class CustomerDashboardPage extends BasePage {
     this.logger.info(`Withdrawal submitted for amount ${amount}`);
   }
 
-  private categoryCombobox(panel: Locator): Locator {
-    const byName = panel.getByRole('combobox', { name: /category/i });
-    const byOption = panel.getByRole('combobox').filter({
-      has: this.page.locator('option', { hasText: /no category/i }),
-    });
-    return byName.or(byOption).first();
+  private labeledSelect(label: string): Locator {
+    return this.page
+      .locator(`xpath=//label[text()='${label}']/following-sibling::div/descendant::select`)
+      .filter({ visible: true });
   }
 
-  private accountCombobox(panel: Locator): Locator {
-    const byName = panel.getByRole('combobox', { name: /account/i });
-    const byCurrency = panel.getByRole('combobox').filter({
-      has: this.page.locator('option', { hasText: /pound|dollar|rupee/i }),
-    });
-    return byName.or(byCurrency).first();
+  private async selectAccountIfPresent(
+    select: Locator,
+    name: string,
+    currency?: string,
+  ): Promise<SelectedOption | undefined> {
+    try {
+      await select.waitFor({ state: 'visible', timeout: 5000 });
+    } catch {
+      this.logger.info(`${name} is not on this screen; using the current account`);
+      return undefined;
+    }
+    return this.selectSharedAccount(select, name, currency);
   }
 
-  private async selectRandomCategory(combobox: Locator, name: string): Promise<SelectedOption> {
-    await this.waits.selectOptionsReady(combobox, name);
-    const selected = await this.actions.select(combobox, name);
-    this.logger.info(`Selected random ${name} from the dropdown: ${selected.label}`);
+  private async selectRandomCategory(select: Locator, name: string): Promise<SelectedOption> {
+    await this.waits.visible(select, name);
+    const tag = await select.evaluate((el) => el.tagName);
+    if (tag !== 'SELECT') {
+      this.logger.warn(`${name} expected a native <select>, found <${tag.toLowerCase()}>`);
+    }
+    await this.waits.selectOptionsReady(select, name);
+    const selected = await this.actions.selectRandom(select, name, { exclude: ['No Category'] });
+    this.logger.info(`Selected random ${name} with selectOption: ${selected.label}`);
     return selected;
   }
 
@@ -275,12 +293,6 @@ export class CustomerDashboardPage extends BasePage {
     currency?: string,
   ): Promise<SelectedOption> {
     await this.waits.selectOptionsReady(combobox, name);
-    if (await this.isCategoryCombobox(combobox)) {
-      const selected = await this.actions.select(combobox, name);
-      this.logger.info(`${name} resolved to the category dropdown — selected random option "${selected.label}"`);
-      return selected;
-    }
-
     const wanted = currency?.trim();
     if (wanted) {
       const option = combobox.locator('option').filter({ hasText: new RegExp(wanted, 'i') }).first();
@@ -307,12 +319,5 @@ export class CustomerDashboardPage extends BasePage {
     const selected = await this.actions.select(combobox, name);
     this.logger.info(`${name} selected ${selected.label}`);
     return selected;
-  }
-
-  private async isCategoryCombobox(combobox: Locator): Promise<boolean> {
-    const labels = (await combobox.locator('option').allTextContents()).map((text) =>
-      text.replace(/\s+/g, ' ').trim().toLowerCase(),
-    );
-    return labels.some((label) => label.includes('no category'));
   }
 }

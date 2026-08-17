@@ -88,6 +88,7 @@
     "docs:lld": "node -e \"console.log('Open docs/lld.html in a browser')\"",
     "docs:pdf": "tsx scripts/generate-pdf.ts",
     "docs:hld:stakeholder": "tsx scripts/generate-hld-stakeholder.ts",
+    "docs:hld:innovatz": "tsx scripts/generate-hld-innovatz-pptx.ts",
     "docs:generate": "npm run docs:pdf && npm run docs:hld:stakeholder",
     "secret:encrypt": "tsx scripts/encrypt-secret.ts",
     "secret:migrate": "tsx scripts/encrypt-secret.ts --migrate-env",

@@ -314,11 +314,15 @@ export class PlaywrightActions {
         const picked = await this.pickRandomOption(active, name);
         this.logger.info(`Select: ${name} was blank — picked random option "${picked.label}" (${picked.value})`);
         await active.selectOption({ value: picked.value });
+        await active.dispatchEvent('input');
+        await active.dispatchEvent('change');
         return picked;
       }
 
       this.logger.info(`Select: ${name} = ${JSON.stringify(value)}`);
       await active.selectOption(value as Exclude<SelectValue, null | undefined>);
+      await active.dispatchEvent('input');
+      await active.dispatchEvent('change');
       return this.readSelectedOption(active, value);
     });
   }
@@ -332,6 +336,8 @@ export class PlaywrightActions {
       const picked = await this.pickRandomOption(active, name, options?.exclude);
       this.logger.info(`Select: ${name} picked random option "${picked.label}" (${picked.value})`);
       await active.selectOption({ value: picked.value });
+      await active.dispatchEvent('input');
+      await active.dispatchEvent('change');
       return picked;
     });
   }
@@ -376,9 +382,14 @@ export class PlaywrightActions {
 
     for (let index = 0; index < count; index += 1) {
       const option = options.nth(index);
-      const value = (await option.getAttribute('value')) ?? '';
-      const label = ((await option.textContent()) ?? '').trim();
-      const disabled = await option.isDisabled().catch(() => false);
+      const { value, label, disabled } = await option.evaluate((el) => {
+        const node = el as HTMLOptionElement;
+        return {
+          value: node.value ?? '',
+          label: (node.textContent ?? '').trim(),
+          disabled: Boolean(node.disabled),
+        };
+      });
       if (this.isPlaceholderOption(value, label, disabled)) continue;
       if (this.isExcludedLabel(label, exclude)) continue;
       usable.push({ value, label: label || value });

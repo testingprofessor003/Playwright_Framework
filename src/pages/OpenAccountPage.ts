@@ -1,7 +1,7 @@
 import { BrowserContext, Page } from 'playwright';
 import { BasePage } from './BasePage';
 import { FrameworkLogger } from '../logger/logger';
-import { AccountData } from '../testdata/accountFactory';
+import { AccountData, resolveAccountCurrency } from '../testdata/accountFactory';
 import { ElementNotFoundError } from '../errors/errors';
 
 export class OpenAccountPage extends BasePage {
@@ -14,10 +14,9 @@ export class OpenAccountPage extends BasePage {
   }
 
   private get currencyCombobox() {
-    return this.page
-      .locator('div')
-      .filter({ hasText: /^Select currency…Dollar \(USD\)Pound \(GBP\)Rupee \(INR\)$/ })
-      .getByRole('combobox');
+    return this.page.getByRole('combobox').filter({
+      has: this.page.locator('option', { hasText: /dollar|pound|rupee/i }),
+    });
   }
 
   private get initialDepositInput() {
@@ -76,13 +75,41 @@ export class OpenAccountPage extends BasePage {
   async selectCurrency(currency?: string): Promise<string> {
     const combo =
       (await this.currencyCombobox.count()) > 0
-        ? this.currencyCombobox
+        ? this.currencyCombobox.first()
         : this.page.getByRole('combobox').nth(1);
-    await this.waits.visible(combo, 'Currency');
-    const selected = await this.actions.select(combo, 'Currency', currency);
-    if (!currency?.trim()) {
+    await this.waits.selectOptionsReady(combo, 'Currency');
+
+    const wanted = currency?.trim();
+    if (!wanted) {
+      const selected = await this.actions.select(combo, 'Currency');
       this.logger.info(`Currency was blank — selected random currency: ${selected.label}`);
+      return selected.label || selected.value;
     }
+
+    const option = combo.locator('option').filter({ hasText: new RegExp(wanted, 'i') }).first();
+    if ((await option.count()) > 0) {
+      const value = await option.getAttribute('value');
+      if (value) {
+        const selected = await this.actions.select(combo, 'Currency', value);
+        this.logger.info(`Selected currency: ${selected.label} (requested ${wanted})`);
+        return selected.label || selected.value;
+      }
+    }
+
+    const labels = (await combo.locator('option').allTextContents()).map((text) => text.trim());
+    const match = labels.find(
+      (label) =>
+        label.toLowerCase() === wanted.toLowerCase() || label.toLowerCase().includes(wanted.toLowerCase()),
+    );
+    if (!match) {
+      throw new ElementNotFoundError(`Currency "${wanted}" was not found in the Open Account currency list`, {
+        action: 'selectCurrency',
+        locator: 'Currency combobox',
+      });
+    }
+
+    const selected = await this.actions.select(combo, 'Currency', { label: match });
+    this.logger.info(`Selected currency: ${selected.label} (requested ${wanted})`);
     return selected.label || selected.value;
   }
 
@@ -109,11 +136,15 @@ export class OpenAccountPage extends BasePage {
   async openAccountsForCustomer(customerName: string, accounts: AccountData[]): Promise<void> {
     for (const [index, account] of accounts.entries()) {
       this.logger.info(
-        `Opening account ${index + 1}/${accounts.length} using shared-memory customer "${customerName}": ${account.currency} ${account.amount}`,
+        `Opening account ${index + 1}/${accounts.length} using shared-memory customer "${customerName}": ${account.currency || 'random'} ${account.amount}`,
       );
       await this.openOpenAccountTab();
       await this.selectCreatedCustomer(customerName);
-      await this.selectCurrency(account.currency);
+      const selected = await this.selectCurrency(account.currency);
+      const resolved = resolveAccountCurrency(selected);
+      if (resolved) {
+        account.currency = resolved;
+      }
       await this.enterInitialDeposit(account.amount);
       await this.submitOpenAccount();
     }

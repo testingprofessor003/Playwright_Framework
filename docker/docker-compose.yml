@@ -52,7 +52,7 @@ services:
       DB_USER: root
       DB_PASSWORD: password
       DB_NAME: playwright_framework
-      LLM_ENABLED: "true"
+      LLM_ENABLED: "false"
       LLM_HOST: http://ollama:11434
       DASHBOARD_PORT: 3000
     depends_on:
